@@ -17,6 +17,8 @@ Connects to any OpenAI API-compatible endpoint. Defaults to [Ollama](https://oll
 - Copy button on messages
 - Token usage display
 - Dark/light theme toggle
+- Persistent settings via TOML config (`~/.config/hchat/config.toml`)
+- Configurable font sizes and UI scale
 - Cross-platform (Linux, macOS)
 
 ## Install
@@ -76,6 +78,25 @@ hchat &disown
 ```
 
 hChat connects to `http://localhost:11434/v1` by default. You can change the endpoint in the top bar.
+
+## Configuration
+
+Settings are stored in `~/.config/hchat/config.toml` and persist across sessions. You can edit the file directly or use the settings panel in the app (gear icon).
+
+```toml
+font_size = 14.0
+mono_font_size = 13.0
+ui_scale = 1.0
+dark_mode = true
+default_endpoint = "http://localhost:11434/v1"
+system_prompt = ""
+temperature = 0.7
+max_tokens = 2048
+use_max_tokens = false
+saved_endpoints = ["http://localhost:11434/v1"]
+```
+
+All fields are optional. Missing fields use defaults, so existing configs won't break on upgrade.
 
 ## Keybindings
 
