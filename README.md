@@ -57,8 +57,23 @@ cargo run --release
 
 ## Launch
 
-1. Start your local LLM server (e.g. `ollama serve`)
-2. Run `hchat` from your terminal, or open hChat from your Applications folder on macOS
+Make sure your local LLM server is running first:
+
+```bash
+ollama serve
+```
+
+Then launch hChat:
+
+```bash
+# Linux: run detached so it doesn't tie up your terminal
+hchat &disown
+
+# macOS: open the .app bundle, or run detached
+open /Applications/hChat.app
+# or
+hchat &disown
+```
 
 hChat connects to `http://localhost:11434/v1` by default. You can change the endpoint in the top bar.
 
