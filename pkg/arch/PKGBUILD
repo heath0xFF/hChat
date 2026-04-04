@@ -1,0 +1,15 @@
+# Maintainer: Heath
+pkgname=hchat
+pkgver=0.1.0
+pkgrel=1
+pkgdesc="Lightweight desktop chat client for local LLMs"
+arch=('x86_64')
+url="https://github.com/heath0xFF/hChat"
+license=('MIT')
+depends=('gcc-libs' 'vulkan-icd-loader')
+source=("$url/releases/download/v$pkgver/hchat-linux-x86_64.tar.gz")
+sha256sums=('SKIP')
+
+package() {
+    install -Dm755 hchat "$pkgdir/usr/bin/hchat"
+}

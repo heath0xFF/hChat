@@ -11,16 +11,45 @@ Connects to any OpenAI API-compatible endpoint. Defaults to [Ollama](https://oll
 - Configurable API endpoint
 - Cross-platform (Linux, macOS)
 
-## Requirements
+## Install
 
-- Rust toolchain (`rustup`)
-- A running OpenAI-compatible API server (e.g. `ollama serve`)
+Download the latest release from [GitHub Releases](https://github.com/heath0xFF/hChat/releases).
 
-## Build & Run
+### macOS
+
+```bash
+# Binary
+tar xzf hchat-macos-arm64.tar.gz
+mv hchat /usr/local/bin/
+
+# Or use the .app bundle
+unzip hChat.app.zip -d /Applications
+```
+
+### Debian/Ubuntu
+
+```bash
+sudo dpkg -i hchat_*.deb
+```
+
+### Arch Linux
+
+```bash
+# From the repo's pkg/arch directory
+makepkg -si
+```
+
+## Build from source
+
+Requires the [Rust toolchain](https://rustup.rs).
 
 ```bash
 cargo run --release
 ```
+
+## Usage
+
+Make sure an OpenAI-compatible API server is running (e.g. `ollama serve`), then launch `hchat`.
 
 ## Keybindings
 
