@@ -84,6 +84,8 @@ hChat connects to `http://localhost:11434/v1` by default. You can change the end
 Settings are stored in `~/.config/hchat/config.toml` and persist across sessions. You can edit the file directly or use the settings panel in the app (gear icon).
 
 ```toml
+font_family = "JetBrains Mono"
+mono_font_family = "JetBrains Mono"
 font_size = 14.0
 mono_font_size = 13.0
 ui_scale = 1.0
@@ -97,6 +99,10 @@ saved_endpoints = ["http://localhost:11434/v1"]
 ```
 
 All fields are optional. Missing fields use defaults, so existing configs won't break on upgrade.
+
+### Custom fonts
+
+Set `font_family` and `mono_font_family` to any font installed on your system. hChat looks up fonts by name using your platform's font system (fontconfig on Linux, Core Text on macOS). Leave empty to use egui's built-in fonts. Font changes take effect on save and restart.
 
 ## Keybindings
 

@@ -18,6 +18,8 @@ pub struct Config {
     pub max_tokens: u32,
     pub use_max_tokens: bool,
     pub saved_endpoints: Vec<String>,
+    pub font_family: String,
+    pub mono_font_family: String,
 }
 
 impl Default for Config {
@@ -33,6 +35,8 @@ impl Default for Config {
             max_tokens: 2048,
             use_max_tokens: false,
             saved_endpoints: vec!["http://localhost:11434/v1".to_string()],
+            font_family: String::new(),
+            mono_font_family: String::new(),
         }
     }
 }

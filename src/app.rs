@@ -407,6 +407,8 @@ impl ChatApp {
 }
 
 fn configure_fonts(ctx: &egui::Context, config: &Config) {
+    load_custom_fonts(ctx, config);
+
     let mut style = (*ctx.global_style()).clone();
     style.text_styles.insert(
         egui::TextStyle::Body,
@@ -417,6 +419,60 @@ fn configure_fonts(ctx: &egui::Context, config: &Config) {
         egui::FontId::new(config.mono_font_size, egui::FontFamily::Monospace),
     );
     ctx.set_global_style(style);
+}
+
+fn load_custom_fonts(ctx: &egui::Context, config: &Config) {
+    use font_kit::source::SystemSource;
+
+    let mut fonts = egui::FontDefinitions::default();
+    let source = SystemSource::new();
+
+    if !config.font_family.is_empty() {
+        if let Some(data) = lookup_font(&source, &config.font_family) {
+            fonts
+                .font_data
+                .insert("custom_proportional".to_owned(), data.into());
+            fonts
+                .families
+                .get_mut(&egui::FontFamily::Proportional)
+                .unwrap()
+                .insert(0, "custom_proportional".to_owned());
+        } else {
+            eprintln!("Warning: font '{}' not found, using default", config.font_family);
+        }
+    }
+
+    if !config.mono_font_family.is_empty() {
+        if let Some(data) = lookup_font(&source, &config.mono_font_family) {
+            fonts
+                .font_data
+                .insert("custom_monospace".to_owned(), data.into());
+            fonts
+                .families
+                .get_mut(&egui::FontFamily::Monospace)
+                .unwrap()
+                .insert(0, "custom_monospace".to_owned());
+        } else {
+            eprintln!("Warning: font '{}' not found, using default", config.mono_font_family);
+        }
+    }
+
+    ctx.set_fonts(fonts);
+}
+
+fn lookup_font(
+    source: &font_kit::source::SystemSource,
+    name: &str,
+) -> Option<egui::FontData> {
+    use font_kit::family_name::FamilyName;
+    use font_kit::properties::Properties;
+
+    let handle = source
+        .select_best_match(&[FamilyName::Title(name.to_string())], &Properties::new())
+        .ok()?;
+    let font = handle.load().ok()?;
+    let data = font.copy_font_data()?;
+    Some(egui::FontData::from_owned((*data).clone()))
 }
 
 fn apply_theme(ctx: &egui::Context, dark: bool) {
@@ -578,15 +634,28 @@ impl eframe::App for ChatApp {
                 ui.separator();
                 let mut fonts_changed = false;
                 ui.horizontal(|ui| {
-                    ui.label("Font size:");
+                    ui.label("Font:");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.config.font_family)
+                            .hint_text("default")
+                            .desired_width(120.0),
+                    );
+                    ui.label("Size:");
                     if ui
                         .add(egui::Slider::new(&mut self.config.font_size, 8.0..=24.0).step_by(1.0))
                         .changed()
                     {
                         fonts_changed = true;
                     }
-                    ui.separator();
-                    ui.label("Mono size:");
+                });
+                ui.horizontal(|ui| {
+                    ui.label("Mono:");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.config.mono_font_family)
+                            .hint_text("default")
+                            .desired_width(120.0),
+                    );
+                    ui.label("Size:");
                     if ui
                         .add(egui::Slider::new(&mut self.config.mono_font_size, 8.0..=24.0).step_by(1.0))
                         .changed()
