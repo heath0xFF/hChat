@@ -55,9 +55,12 @@ Requires the [Rust toolchain](https://rustup.rs).
 cargo run --release
 ```
 
-## Usage
+## Launch
 
-Make sure an OpenAI-compatible API server is running (e.g. `ollama serve`), then launch `hchat`.
+1. Start your local LLM server (e.g. `ollama serve`)
+2. Run `hchat` from your terminal, or open hChat from your Applications folder on macOS
+
+hChat connects to `http://localhost:11434/v1` by default. You can change the endpoint in the top bar.
 
 ## Keybindings
 

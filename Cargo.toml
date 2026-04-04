@@ -33,6 +33,9 @@ identifier = "com.heath.hchat"
 category = "Utility"
 
 [profile.release]
+strip = true
+
+[profile.dist]
+inherits = "release"
 opt-level = "s"
 lto = true
-strip = true
