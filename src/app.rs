@@ -1,4 +1,5 @@
 use crate::api::{self, StreamEvent, Usage};
+use crate::config::Config;
 use crate::message::{Message, Role};
 use crate::storage::Storage;
 use eframe::egui;
@@ -47,13 +48,15 @@ pub struct ChatApp {
     // Rename
     renaming_conversation: Option<i64>,
     rename_buffer: String,
+    // Config
+    config: Config,
 }
 
 impl ChatApp {
-    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
-        configure_fonts(&cc.egui_ctx);
-        let dark_mode = true;
-        apply_theme(&cc.egui_ctx, dark_mode);
+    pub fn new(cc: &eframe::CreationContext<'_>, config: Config) -> Self {
+        configure_fonts(&cc.egui_ctx, &config);
+        apply_theme(&cc.egui_ctx, config.dark_mode);
+        cc.egui_ctx.set_pixels_per_point(config.ui_scale);
 
         let runtime = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
         let storage = Storage::new();
@@ -63,7 +66,7 @@ impl ChatApp {
             .map(|c| (c.id, c.title))
             .collect();
 
-        let base_url = "http://localhost:11434/v1".to_string();
+        let base_url = config.default_endpoint.clone();
 
         let mut app = Self {
             messages: Vec::new(),
@@ -78,11 +81,11 @@ impl ChatApp {
             runtime,
             models_loading: true,
             error: None,
-            system_prompt: String::new(),
-            temperature: 0.7,
-            max_tokens: 2048,
-            use_max_tokens: false,
-            dark_mode,
+            system_prompt: config.system_prompt.clone(),
+            temperature: config.temperature,
+            max_tokens: config.max_tokens,
+            use_max_tokens: config.use_max_tokens,
+            dark_mode: config.dark_mode,
             commonmark_cache: CommonMarkCache::default(),
             editing_message: None,
             edit_buffer: String::new(),
@@ -94,12 +97,13 @@ impl ChatApp {
             search_query: String::new(),
             search_results: Vec::new(),
             show_search: false,
-            saved_endpoints: vec![base_url],
+            saved_endpoints: config.saved_endpoints.clone(),
             show_endpoints: false,
             new_endpoint: String::new(),
             last_usage: None,
             renaming_conversation: None,
             rename_buffer: String::new(),
+            config,
         };
 
         app.fetch_models();
@@ -290,23 +294,21 @@ impl ChatApp {
         }
         self.streaming = false;
         self.rx = None;
-        if let Some(last) = self.messages.last() {
-            if last.role == Role::Assistant && last.content.is_empty() {
+        if let Some(last) = self.messages.last()
+            && last.role == Role::Assistant && last.content.is_empty() {
                 self.messages.pop();
             }
-        }
     }
 
     fn regenerate(&mut self) {
         if self.streaming || self.models.is_empty() {
             return;
         }
-        if let Some(last) = self.messages.last() {
-            if last.role == Role::Assistant {
+        if let Some(last) = self.messages.last()
+            && last.role == Role::Assistant {
                 self.messages.pop();
                 self.start_streaming();
             }
-        }
     }
 
     fn edit_and_resend(&mut self, index: usize) {
@@ -338,13 +340,12 @@ impl ChatApp {
             while let Ok(event) = rx.try_recv() {
                 match event {
                     StreamEvent::Token(token) => {
-                        if let Ok(models) = serde_json::from_str::<Vec<String>>(&token) {
-                            if !models.is_empty() {
+                        if let Ok(models) = serde_json::from_str::<Vec<String>>(&token)
+                            && !models.is_empty() {
                                 self.models = models;
                                 self.selected_model =
                                     self.selected_model.min(self.models.len().saturating_sub(1));
                             }
-                        }
                     }
                     StreamEvent::Done => {
                         self.models_loading = false;
@@ -369,11 +370,10 @@ impl ChatApp {
             while let Ok(event) = rx.try_recv() {
                 match event {
                     StreamEvent::Token(token) => {
-                        if let Some(last) = self.messages.last_mut() {
-                            if last.role == Role::Assistant {
+                        if let Some(last) = self.messages.last_mut()
+                            && last.role == Role::Assistant {
                                 last.content.push_str(&token);
                             }
-                        }
                     }
                     StreamEvent::UsageInfo(usage) => {
                         self.last_usage = Some(usage);
@@ -390,11 +390,10 @@ impl ChatApp {
                         self.streaming = false;
                         self.cancel_token = None;
                         self.rx = None;
-                        if let Some(last) = self.messages.last() {
-                            if last.role == Role::Assistant && last.content.is_empty() {
+                        if let Some(last) = self.messages.last()
+                            && last.role == Role::Assistant && last.content.is_empty() {
                                 self.messages.pop();
                             }
-                        }
                         break;
                     }
                 }
@@ -407,15 +406,15 @@ impl ChatApp {
     }
 }
 
-fn configure_fonts(ctx: &egui::Context) {
+fn configure_fonts(ctx: &egui::Context, config: &Config) {
     let mut style = (*ctx.global_style()).clone();
     style.text_styles.insert(
         egui::TextStyle::Body,
-        egui::FontId::new(14.0, egui::FontFamily::Proportional),
+        egui::FontId::new(config.font_size, egui::FontFamily::Proportional),
     );
     style.text_styles.insert(
         egui::TextStyle::Monospace,
-        egui::FontId::new(13.0, egui::FontFamily::Monospace),
+        egui::FontId::new(config.mono_font_size, egui::FontFamily::Monospace),
     );
     ctx.set_global_style(style);
 }
@@ -510,6 +509,7 @@ impl eframe::App for ChatApp {
                     .clicked()
                 {
                     self.dark_mode = !self.dark_mode;
+                    self.config.dark_mode = self.dark_mode;
                     apply_theme(&ctx, self.dark_mode);
                 }
             });
@@ -573,6 +573,70 @@ impl eframe::App for ChatApp {
                         self.use_max_tokens,
                         egui::Slider::new(&mut self.max_tokens, 64..=16384).logarithmic(true),
                     );
+                });
+
+                ui.separator();
+                let mut fonts_changed = false;
+                ui.horizontal(|ui| {
+                    ui.label("Font size:");
+                    if ui
+                        .add(egui::Slider::new(&mut self.config.font_size, 8.0..=24.0).step_by(1.0))
+                        .changed()
+                    {
+                        fonts_changed = true;
+                    }
+                    ui.separator();
+                    ui.label("Mono size:");
+                    if ui
+                        .add(egui::Slider::new(&mut self.config.mono_font_size, 8.0..=24.0).step_by(1.0))
+                        .changed()
+                    {
+                        fonts_changed = true;
+                    }
+                });
+                ui.horizontal(|ui| {
+                    ui.label("UI scale:");
+                    if ui
+                        .add(egui::Slider::new(&mut self.config.ui_scale, 0.75..=2.0).step_by(0.05))
+                        .changed()
+                    {
+                        ctx.set_pixels_per_point(self.config.ui_scale);
+                    }
+                });
+                if fonts_changed {
+                    configure_fonts(&ctx, &self.config);
+                }
+
+                ui.horizontal(|ui| {
+                    if ui.button("Save settings").clicked() {
+                        self.config.dark_mode = self.dark_mode;
+                        self.config.default_endpoint = self.base_url.clone();
+                        self.config.system_prompt = self.system_prompt.clone();
+                        self.config.temperature = self.temperature;
+                        self.config.max_tokens = self.max_tokens;
+                        self.config.use_max_tokens = self.use_max_tokens;
+                        self.config.saved_endpoints = self.saved_endpoints.clone();
+                        if let Err(e) = self.config.save() {
+                            self.error = Some(format!("Failed to save settings: {e}"));
+                        }
+                    }
+                    if ui.button("Reset to defaults").clicked() {
+                        self.config = Config::default();
+                        self.dark_mode = self.config.dark_mode;
+                        self.base_url = self.config.default_endpoint.clone();
+                        self.system_prompt = self.config.system_prompt.clone();
+                        self.temperature = self.config.temperature;
+                        self.max_tokens = self.config.max_tokens;
+                        self.use_max_tokens = self.config.use_max_tokens;
+                        self.saved_endpoints = self.config.saved_endpoints.clone();
+                        configure_fonts(&ctx, &self.config);
+                        ctx.set_pixels_per_point(self.config.ui_scale);
+                        apply_theme(&ctx, self.config.dark_mode);
+                        if let Err(e) = self.config.save() {
+                            self.error = Some(format!("Failed to save settings: {e}"));
+                        }
+                        self.fetch_models();
+                    }
                 });
             }
         });
@@ -672,7 +736,7 @@ impl eframe::App for ChatApp {
                     if !self.search_query.is_empty() && !self.search_results.is_empty() {
                         for (conv_id, title, snippet) in &self.search_results.clone() {
                             if ui
-                                .button(format!("{title}"))
+                                .button(title.to_string())
                                 .on_hover_text(snippet)
                                 .clicked()
                             {
@@ -845,19 +909,16 @@ impl eframe::App for ChatApp {
                             if ui.small_button("📋").on_hover_text("Copy").clicked() {
                                 action = Some(MessageAction::Copy(i));
                             }
-                            if msg.role == Role::User && !self.streaming {
-                                if ui.small_button("✏").on_hover_text("Edit").clicked() {
+                            if msg.role == Role::User && !self.streaming
+                                && ui.small_button("✏").on_hover_text("Edit").clicked() {
                                     action = Some(MessageAction::StartEdit(i));
                                 }
-                            }
                             if msg.role == Role::Assistant
                                 && i == msg_count - 1
                                 && !self.streaming
-                            {
-                                if ui.small_button("🔄").on_hover_text("Regenerate").clicked() {
+                                && ui.small_button("🔄").on_hover_text("Regenerate").clicked() {
                                     action = Some(MessageAction::Regenerate);
                                 }
-                            }
                         });
                     });
 

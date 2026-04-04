@@ -188,11 +188,10 @@ pub fn stream_chat(
                         if let Ok(chunk) = serde_json::from_str::<ChatChunk>(data) {
                             if let Some(choices) = chunk.choices {
                                 for choice in choices {
-                                    if let Some(delta) = choice.delta {
-                                        if let Some(content) = delta.content {
+                                    if let Some(delta) = choice.delta
+                                        && let Some(content) = delta.content {
                                             let _ = tx.send(StreamEvent::Token(content));
                                         }
-                                    }
                                 }
                             }
                             if let Some(usage) = chunk.usage {
