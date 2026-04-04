@@ -6,9 +6,17 @@ Connects to any OpenAI API-compatible endpoint. Defaults to [Ollama](https://oll
 
 ## Features
 
-- Streaming token display (SSE)
+- Streaming token display with stop/regenerate controls
+- Markdown rendering in AI responses (code blocks, bold, lists)
 - Model selector auto-populated from Ollama
-- Configurable API endpoint
+- Conversation history with SQLite persistence
+- Sidebar with conversation list, search, and export
+- System prompt, temperature, and max tokens settings
+- Multiple saved API endpoints
+- Edit and resend previous messages
+- Copy button on messages
+- Token usage display
+- Dark/light theme toggle
 - Cross-platform (Linux, macOS)
 
 ## Install
@@ -57,3 +65,4 @@ Make sure an OpenAI-compatible API server is running (e.g. `ollama serve`), then
 |---|---|
 | Enter | Send message |
 | Shift+Enter | New line |
+| Ctrl+N | New conversation |
