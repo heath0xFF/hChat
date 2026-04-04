@@ -64,6 +64,15 @@ impl Storage {
         self.conn.last_insert_rowid()
     }
 
+    pub fn update_conversation_title(&self, id: i64, title: &str) {
+        self.conn
+            .execute(
+                "UPDATE conversations SET title = ?1, updated_at = datetime('now') WHERE id = ?2",
+                params![title, id],
+            )
+            .ok();
+    }
+
     pub fn list_conversations(&self) -> Vec<Conversation> {
         let mut stmt = match self
             .conn

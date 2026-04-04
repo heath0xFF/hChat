@@ -44,6 +44,9 @@ pub struct ChatApp {
     new_endpoint: String,
     // Token usage
     last_usage: Option<Usage>,
+    // Rename
+    renaming_conversation: Option<i64>,
+    rename_buffer: String,
 }
 
 impl ChatApp {
@@ -95,6 +98,8 @@ impl ChatApp {
             show_endpoints: false,
             new_endpoint: String::new(),
             last_usage: None,
+            renaming_conversation: None,
+            rename_buffer: String::new(),
         };
 
         app.fetch_models();
@@ -640,7 +645,7 @@ impl eframe::App for ChatApp {
 
         // Sidebar
         if self.show_sidebar {
-            egui::Panel::left("sidebar").default_width(200.0).show_inside(ui, |ui| {
+            egui::Panel::left("sidebar").default_size(200.0).show_inside(ui, |ui| {
                 ui.horizontal(|ui| {
                     if ui.button("+ New Chat").clicked() {
                         self.new_conversation();
@@ -687,24 +692,93 @@ impl eframe::App for ChatApp {
 
                     for (id, title) in &self.conversation_list.clone() {
                         let is_current = self.current_conversation_id == Some(*id);
-                        ui.horizontal(|ui| {
-                            if ui.selectable_label(is_current, title.as_str()).clicked()
-                                && !is_current
-                            {
+
+                        // Inline rename mode
+                        if self.renaming_conversation == Some(*id) {
+                            ui.horizontal(|ui| {
+                                let resp = ui.text_edit_singleline(&mut self.rename_buffer);
+                                if resp.lost_focus()
+                                    || ui.input(|i| i.key_pressed(egui::Key::Enter))
+                                {
+                                    action = Some(SidebarAction::FinishRename(*id));
+                                }
+                                if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                                    self.renaming_conversation = None;
+                                    self.rename_buffer.clear();
+                                }
+                            });
+                        } else {
+                            // Kebab menu pinned right, title fills remaining space
+                            let row_height = ui.spacing().interact_size.y;
+                            let full_width = ui.available_width();
+                            let (row_rect, _) = ui.allocate_exact_size(
+                                egui::vec2(full_width, row_height),
+                                egui::Sense::hover(),
+                            );
+
+                            // Kebab button on the right
+                            let kebab_width = 20.0;
+                            let kebab_rect = egui::Rect::from_min_size(
+                                egui::pos2(row_rect.right() - kebab_width, row_rect.top()),
+                                egui::vec2(kebab_width, row_height),
+                            );
+                            let mut kebab_ui = ui.new_child(egui::UiBuilder::new().max_rect(kebab_rect));
+                            kebab_ui.menu_button("...", |ui| {
+                                if ui.button("Rename").clicked() {
+                                    action = Some(SidebarAction::StartRename(*id));
+                                    ui.close();
+                                }
+                                if ui.button("Export").clicked() {
+                                    action = Some(SidebarAction::Export(*id));
+                                    ui.close();
+                                }
+                                if ui.button("Delete").clicked() {
+                                    action = Some(SidebarAction::Delete(*id));
+                                    ui.close();
+                                }
+                            });
+
+                            // Title label fills the rest
+                            let title_rect = egui::Rect::from_min_max(
+                                row_rect.min,
+                                egui::pos2(row_rect.right() - kebab_width - 4.0, row_rect.bottom()),
+                            );
+                            let mut title_ui = ui.new_child(egui::UiBuilder::new().max_rect(title_rect));
+                            let resp = title_ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(title.as_str())
+                                        .color(if is_current {
+                                            title_ui.visuals().strong_text_color()
+                                        } else {
+                                            title_ui.visuals().text_color()
+                                        }),
+                                )
+                                .truncate()
+                                .selectable(false)
+                                .sense(egui::Sense::click()),
+                            );
+
+                            if resp.clicked() && !is_current {
                                 action = Some(SidebarAction::Load(*id));
                             }
-                            ui.with_layout(
-                                egui::Layout::right_to_left(egui::Align::Center),
-                                |ui| {
-                                    if ui.small_button("✕").on_hover_text("Delete").clicked() {
-                                        action = Some(SidebarAction::Delete(*id));
-                                    }
-                                    if ui.small_button("📄").on_hover_text("Export").clicked() {
-                                        action = Some(SidebarAction::Export(*id));
-                                    }
-                                },
-                            );
-                        });
+
+                            // Right-click context menu
+                            resp.context_menu(|ui| {
+                                if ui.button("Rename").clicked() {
+                                    action = Some(SidebarAction::StartRename(*id));
+                                    ui.close();
+                                }
+                                if ui.button("Export").clicked() {
+                                    action = Some(SidebarAction::Export(*id));
+                                    ui.close();
+                                }
+                                if ui.button("Delete").clicked() {
+                                    action = Some(SidebarAction::Delete(*id));
+                                    ui.close();
+                                }
+                            });
+                        }
+                        ui.separator();
                     }
 
                     match action {
@@ -714,6 +788,21 @@ impl eframe::App for ChatApp {
                             let md = self.storage.export_markdown(id);
                             self.copy_to_clipboard(&md);
                         }
+                        Some(SidebarAction::StartRename(id)) => {
+                            if let Some((_, title)) = self.conversation_list.iter().find(|(cid, _)| *cid == id) {
+                                self.rename_buffer = title.clone();
+                            }
+                            self.renaming_conversation = Some(id);
+                        }
+                        Some(SidebarAction::FinishRename(id)) => {
+                            let new_title = self.rename_buffer.trim().to_string();
+                            if !new_title.is_empty() {
+                                self.storage.update_conversation_title(id, &new_title);
+                                self.refresh_conversation_list();
+                            }
+                            self.renaming_conversation = None;
+                            self.rename_buffer.clear();
+                        }
                         None => {}
                     }
                 });
@@ -721,6 +810,11 @@ impl eframe::App for ChatApp {
         }
 
         // Central message area
+        let panel_fill = ui.visuals().panel_fill;
+        egui::Frame::new()
+            .fill(panel_fill)
+            .inner_margin(egui::Margin::symmetric(16, 0))
+            .show(ui, |ui| {
         egui::ScrollArea::vertical()
             .auto_shrink([false; 2])
             .stick_to_bottom(true)
@@ -816,6 +910,7 @@ impl eframe::App for ChatApp {
                     _ => {}
                 }
             });
+        });
     }
 }
 
@@ -831,4 +926,6 @@ enum SidebarAction {
     Load(i64),
     Delete(i64),
     Export(i64),
+    StartRename(i64),
+    FinishRename(i64),
 }
