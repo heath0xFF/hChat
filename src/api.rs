@@ -2,8 +2,12 @@ use crate::message::Message;
 use futures_util::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
+use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
+
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Debug, Deserialize)]
 pub struct OllamaModel {
@@ -13,6 +17,16 @@ pub struct OllamaModel {
 #[derive(Debug, Deserialize)]
 struct OllamaTagsResponse {
     models: Vec<OllamaModel>,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAIModel {
+    id: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct OpenAIModelsResponse {
+    data: Vec<OpenAIModel>,
 }
 
 #[derive(Serialize)]
@@ -54,14 +68,44 @@ pub enum StreamEvent {
     Done,
     Error(String),
     UsageInfo(Usage),
+    ModelsLoaded(Vec<String>),
 }
 
 const MAX_ERROR_BODY: usize = 4096;
 const MAX_STREAM_BUFFER: usize = 1024 * 1024; // 1MB
 
-pub async fn fetch_models(base_url: &str) -> Result<Vec<String>, String> {
-    let client = Client::new();
+pub async fn fetch_models(base_url: &str, api_key: Option<&str>) -> Result<Vec<String>, String> {
+    let client = Client::builder()
+        .timeout(REQUEST_TIMEOUT)
+        .connect_timeout(CONNECT_TIMEOUT)
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
     let url = base_url.trim_end_matches('/');
+
+    // Try OpenAI-standard /v1/models first (works for OpenRouter, LM Studio, vLLM, etc.)
+    let models_url = if url.ends_with("/v1") {
+        format!("{url}/models")
+    } else {
+        format!("{url}/v1/models")
+    };
+
+    let mut request = client.get(&models_url);
+    if let Some(key) = api_key {
+        request = request.bearer_auth(key);
+    }
+
+    if let Ok(resp) = request.send().await {
+        if resp.status().is_success() {
+            if let Ok(openai_resp) = resp.json::<OpenAIModelsResponse>().await {
+                let models: Vec<String> = openai_resp.data.into_iter().map(|m| m.id).collect();
+                if !models.is_empty() {
+                    return Ok(models);
+                }
+            }
+        }
+    }
+
+    // Fall back to Ollama /api/tags
     let api_base = url.trim_end_matches("/v1");
     let resp = client
         .get(format!("{api_base}/api/tags"))
@@ -77,17 +121,39 @@ pub async fn fetch_models(base_url: &str) -> Result<Vec<String>, String> {
     Ok(tags.models.into_iter().map(|m| m.name).collect())
 }
 
+pub struct ChatParams {
+    pub base_url: String,
+    pub model: String,
+    pub messages: Vec<Message>,
+    pub temperature: Option<f32>,
+    pub max_tokens: Option<u32>,
+    pub api_key: Option<String>,
+}
+
 pub fn stream_chat(
-    base_url: String,
-    model: String,
-    messages: Vec<Message>,
-    temperature: Option<f32>,
-    max_tokens: Option<u32>,
+    params: ChatParams,
     tx: mpsc::UnboundedSender<StreamEvent>,
     cancel: CancellationToken,
 ) {
     tokio::spawn(async move {
-        let client = Client::new();
+        let ChatParams {
+            base_url,
+            model,
+            messages,
+            temperature,
+            max_tokens,
+            api_key,
+        } = params;
+        let client = match Client::builder()
+            .connect_timeout(CONNECT_TIMEOUT)
+            .build()
+        {
+            Ok(c) => c,
+            Err(e) => {
+                let _ = tx.send(StreamEvent::Error(format!("Failed to create HTTP client: {e}")));
+                return;
+            }
+        };
         let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
 
         let req = ChatRequest {
@@ -98,7 +164,17 @@ pub fn stream_chat(
             max_tokens,
         };
 
-        let resp = match client.post(&url).json(&req).send().await {
+        let mut request = client.post(&url).json(&req);
+        if let Some(key) = &api_key {
+            request = request.bearer_auth(key);
+        }
+        if base_url.contains("openrouter.ai") {
+            request = request
+                .header("HTTP-Referer", "https://github.com/hhheath/hChat")
+                .header("X-Title", "hChat");
+        }
+
+        let resp = match request.send().await {
             Ok(r) => r,
             Err(e) => {
                 let _ = tx.send(StreamEvent::Error(format!("Request failed: {e}")));
@@ -108,7 +184,6 @@ pub fn stream_chat(
 
         if !resp.status().is_success() {
             let status = resp.status();
-            // Limit error body size to prevent OOM
             let body = resp
                 .bytes()
                 .await
@@ -117,7 +192,17 @@ pub fn stream_chat(
                     String::from_utf8_lossy(truncated).into_owned()
                 })
                 .unwrap_or_default();
-            let _ = tx.send(StreamEvent::Error(format!("{status}: {body}")));
+            // Log full error for debugging but only show sanitized message in UI
+            eprintln!("API error {status}: {body}");
+            let message = match status.as_u16() {
+                401 => format!("{status}: Authentication failed — check your API key"),
+                403 => format!("{status}: Access denied"),
+                404 => format!("{status}: Endpoint not found — check your URL"),
+                429 => format!("{status}: Rate limited — try again later"),
+                500..=599 => format!("{status}: Server error"),
+                _ => format!("{status}: Request failed"),
+            };
+            let _ = tx.send(StreamEvent::Error(message));
             return;
         }
 
@@ -145,12 +230,12 @@ pub fn stream_chat(
                         }
                     };
 
-                    raw_buf.extend_from_slice(&bytes);
-
-                    if raw_buf.len() > MAX_STREAM_BUFFER {
+                    if raw_buf.len() + bytes.len() > MAX_STREAM_BUFFER {
                         let _ = tx.send(StreamEvent::Error("Stream buffer overflow".to_string()));
                         return;
                     }
+
+                    raw_buf.extend_from_slice(&bytes);
 
                     // Find the last valid UTF-8 boundary to avoid splitting multi-byte chars
                     let valid_up_to = match std::str::from_utf8(&raw_buf) {
@@ -166,7 +251,7 @@ pub fn stream_chat(
                     let text = std::str::from_utf8(&raw_buf[..valid_up_to]).unwrap();
                     let mut remaining_start = 0;
 
-                    for line_end in memchr_newlines(text) {
+                    for line_end in newline_positions(text) {
                         let line = text[remaining_start..line_end].trim();
                         remaining_start = line_end + 1;
 
@@ -210,9 +295,8 @@ pub fn stream_chat(
 }
 
 /// Find all newline positions in a string slice
-fn memchr_newlines(s: &str) -> Vec<usize> {
+fn newline_positions(s: &str) -> impl Iterator<Item = usize> + '_ {
     s.bytes()
         .enumerate()
         .filter_map(|(i, b)| if b == b'\n' { Some(i) } else { None })
-        .collect()
 }

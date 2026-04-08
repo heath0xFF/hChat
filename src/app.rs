@@ -1,5 +1,5 @@
-use crate::api::{self, StreamEvent, Usage};
-use crate::config::Config;
+use crate::api::{self, ChatParams, StreamEvent, Usage};
+use crate::config::{Config, Endpoint};
 use crate::message::{Message, Role};
 use crate::storage::Storage;
 use eframe::egui;
@@ -40,9 +40,10 @@ pub struct ChatApp {
     search_results: Vec<(i64, String, String)>,
     show_search: bool,
     // Endpoints
-    saved_endpoints: Vec<String>,
+    saved_endpoints: Vec<Endpoint>,
     show_endpoints: bool,
     new_endpoint: String,
+    new_endpoint_key: String,
     // Token usage
     last_usage: Option<Usage>,
     // Rename
@@ -66,12 +67,10 @@ impl ChatApp {
             .map(|c| (c.id, c.title))
             .collect();
 
-        let base_url = config.default_endpoint.clone();
-
         let mut app = Self {
             messages: Vec::new(),
             input: String::new(),
-            base_url: base_url.clone(),
+            base_url: config.default_endpoint.clone(),
             models: Vec::new(),
             selected_model: 0,
             streaming: false,
@@ -100,6 +99,7 @@ impl ChatApp {
             saved_endpoints: config.saved_endpoints.clone(),
             show_endpoints: false,
             new_endpoint: String::new(),
+            new_endpoint_key: String::new(),
             last_usage: None,
             renaming_conversation: None,
             rename_buffer: String::new(),
@@ -112,14 +112,13 @@ impl ChatApp {
 
     fn fetch_models(&mut self) {
         let base_url = self.base_url.clone();
+        let api_key = self.current_api_key().map(|s| s.to_string());
         let (tx, rx) = mpsc::unbounded_channel();
 
         self.runtime.spawn(async move {
-            match api::fetch_models(&base_url).await {
+            match api::fetch_models(&base_url, api_key.as_deref()).await {
                 Ok(models) => {
-                    if let Ok(json) = serde_json::to_string(&models) {
-                        let _ = tx.send(StreamEvent::Token(json));
-                    }
+                    let _ = tx.send(StreamEvent::ModelsLoaded(models));
                 }
                 Err(e) => {
                     let _ = tx.send(StreamEvent::Error(e));
@@ -137,6 +136,13 @@ impl ChatApp {
             .get(self.selected_model)
             .map(|s| s.as_str())
             .unwrap_or("(no models)")
+    }
+
+    fn current_api_key(&self) -> Option<&str> {
+        self.saved_endpoints
+            .iter()
+            .find(|ep| ep.url == self.base_url)
+            .and_then(|ep| ep.api_key.as_deref())
     }
 
     fn new_conversation(&mut self) {
@@ -283,8 +289,18 @@ impl ChatApp {
             None
         };
 
+        let api_key = self.current_api_key().map(|s| s.to_string());
+
+        let params = ChatParams {
+            base_url,
+            model,
+            messages,
+            temperature,
+            max_tokens,
+            api_key,
+        };
         self.runtime.spawn(async move {
-            api::stream_chat(base_url, model, messages, temperature, max_tokens, tx, cancel)
+            api::stream_chat(params, tx, cancel)
         });
     }
 
@@ -339,13 +355,12 @@ impl ChatApp {
         if let Some(rx) = &mut self.models_rx {
             while let Ok(event) = rx.try_recv() {
                 match event {
-                    StreamEvent::Token(token) => {
-                        if let Ok(models) = serde_json::from_str::<Vec<String>>(&token)
-                            && !models.is_empty() {
-                                self.models = models;
-                                self.selected_model =
-                                    self.selected_model.min(self.models.len().saturating_sub(1));
-                            }
+                    StreamEvent::ModelsLoaded(models) => {
+                        if !models.is_empty() {
+                            self.models = models;
+                            self.selected_model =
+                                self.selected_model.min(self.models.len().saturating_sub(1));
+                        }
                     }
                     StreamEvent::Done => {
                         self.models_loading = false;
@@ -396,6 +411,7 @@ impl ChatApp {
                             }
                         break;
                     }
+                    _ => {}
                 }
             }
         }
@@ -432,11 +448,9 @@ fn load_custom_fonts(ctx: &egui::Context, config: &Config) {
             fonts
                 .font_data
                 .insert("custom_proportional".to_owned(), data.into());
-            fonts
-                .families
-                .get_mut(&egui::FontFamily::Proportional)
-                .unwrap()
-                .insert(0, "custom_proportional".to_owned());
+            if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Proportional) {
+                family.insert(0, "custom_proportional".to_owned());
+            }
         } else {
             eprintln!("Warning: font '{}' not found, using default", config.font_family);
         }
@@ -447,11 +461,9 @@ fn load_custom_fonts(ctx: &egui::Context, config: &Config) {
             fonts
                 .font_data
                 .insert("custom_monospace".to_owned(), data.into());
-            fonts
-                .families
-                .get_mut(&egui::FontFamily::Monospace)
-                .unwrap()
-                .insert(0, "custom_monospace".to_owned());
+            if let Some(family) = fonts.families.get_mut(&egui::FontFamily::Monospace) {
+                family.insert(0, "custom_monospace".to_owned());
+            }
         } else {
             eprintln!("Warning: font '{}' not found, using default", config.mono_font_family);
         }
@@ -522,19 +534,23 @@ impl eframe::App for ChatApp {
                 ui.label("Endpoint:");
 
                 if self.saved_endpoints.len() > 1 {
+                    let mut new_url = None;
                     egui::ComboBox::from_id_salt("endpoint_selector")
                         .selected_text(&self.base_url)
                         .width(200.0)
                         .show_ui(ui, |ui| {
-                            for ep in &self.saved_endpoints.clone() {
-                                if ui.selectable_label(self.base_url == *ep, ep).clicked() {
-                                    self.base_url = ep.clone();
-                                    if !self.streaming {
-                                        self.fetch_models();
-                                    }
+                            for ep in &self.saved_endpoints {
+                                if ui.selectable_label(self.base_url == ep.url, &ep.url).clicked() {
+                                    new_url = Some(ep.url.clone());
                                 }
                             }
                         });
+                    if let Some(url) = new_url {
+                        self.base_url = url;
+                        if !self.streaming {
+                            self.fetch_models();
+                        }
+                    }
                 } else {
                     ui.add(egui::TextEdit::singleline(&mut self.base_url).desired_width(200.0));
                 }
@@ -578,29 +594,59 @@ impl eframe::App for ChatApp {
                     ui.add(
                         egui::TextEdit::singleline(&mut self.new_endpoint)
                             .hint_text("http://localhost:8080/v1")
-                            .desired_width(300.0),
+                            .desired_width(250.0),
+                    );
+                    ui.label("API key:");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.new_endpoint_key)
+                            .hint_text("(optional)")
+                            .password(true)
+                            .desired_width(150.0),
                     );
                     if ui.button("Add").clicked() && !self.new_endpoint.trim().is_empty() {
-                        let ep = self.new_endpoint.trim().to_string();
-                        if !self.saved_endpoints.contains(&ep) {
-                            self.saved_endpoints.push(ep);
+                        let url = self.new_endpoint.trim().to_string();
+                        let api_key = if self.new_endpoint_key.trim().is_empty() {
+                            None
+                        } else {
+                            Some(self.new_endpoint_key.trim().to_string())
+                        };
+                        if !self.saved_endpoints.iter().any(|ep| ep.url == url) {
+                            self.saved_endpoints.push(Endpoint { url, api_key });
                         }
                         self.new_endpoint.clear();
+                        self.new_endpoint_key.clear();
                     }
                 });
                 let mut to_remove = None;
+                let mut key_edit: Option<(usize, Option<String>)> = None;
                 for (i, ep) in self.saved_endpoints.iter().enumerate() {
                     ui.horizontal(|ui| {
-                        ui.label(ep);
+                        ui.label(&ep.url);
+                        let key_icon = if ep.api_key.is_some() { "🔑" } else { "🔒" };
+                        let tooltip = if ep.api_key.is_some() {
+                            "API key set — click to clear"
+                        } else {
+                            "No API key"
+                        };
+                        if ui.small_button(key_icon).on_hover_text(tooltip).clicked()
+                            && ep.api_key.is_some()
+                        {
+                            key_edit = Some((i, None));
+                        }
                         if self.saved_endpoints.len() > 1 && ui.small_button("✕").clicked() {
                             to_remove = Some(i);
                         }
                     });
                 }
+                if let Some((i, new_key)) = key_edit {
+                    self.saved_endpoints[i].api_key = new_key;
+                }
                 if let Some(i) = to_remove {
                     let removed = self.saved_endpoints.remove(i);
-                    if self.base_url == removed {
-                        self.base_url = self.saved_endpoints[0].clone();
+                    if self.base_url == removed.url {
+                        if let Some(first) = self.saved_endpoints.first() {
+                            self.base_url = first.url.clone();
+                        }
                         if !self.streaming {
                             self.fetch_models();
                         }
@@ -798,22 +844,30 @@ impl eframe::App for ChatApp {
                         )
                         .changed();
 
-                    if search_changed && !self.search_query.is_empty() {
-                        self.search_results = self.storage.search(&self.search_query);
+                    if search_changed {
+                        if self.search_query.is_empty() {
+                            self.search_results.clear();
+                        } else {
+                            self.search_results = self.storage.search(&self.search_query);
+                        }
                     }
 
                     if !self.search_query.is_empty() && !self.search_results.is_empty() {
-                        for (conv_id, title, snippet) in &self.search_results.clone() {
+                        let mut selected_conv = None;
+                        for (conv_id, title, snippet) in &self.search_results {
                             if ui
-                                .button(title.to_string())
-                                .on_hover_text(snippet)
+                                .button(title.as_str())
+                                .on_hover_text(snippet.as_str())
                                 .clicked()
                             {
-                                self.load_conversation(*conv_id);
-                                self.show_search = false;
-                                self.search_query.clear();
-                                self.search_results.clear();
+                                selected_conv = Some(*conv_id);
                             }
+                        }
+                        if let Some(conv_id) = selected_conv {
+                            self.load_conversation(conv_id);
+                            self.show_search = false;
+                            self.search_query.clear();
+                            self.search_results.clear();
                         }
                     }
                 }
@@ -823,7 +877,7 @@ impl eframe::App for ChatApp {
                 egui::ScrollArea::vertical().show(ui, |ui| {
                     let mut action: Option<SidebarAction> = None;
 
-                    for (id, title) in &self.conversation_list.clone() {
+                    for (id, title) in &self.conversation_list {
                         let is_current = self.current_conversation_id == Some(*id);
 
                         // Inline rename mode

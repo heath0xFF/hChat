@@ -1,9 +1,57 @@
+use serde::de::Deserializer;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::io;
 use std::path::PathBuf;
 
+#[cfg(unix)]
+fn set_dir_permissions(path: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+    let _ = fs::set_permissions(path, fs::Permissions::from_mode(0o700));
+}
+
 const MAX_CONFIG_SIZE: u64 = 1_048_576; // 1 MB
+
+#[derive(Serialize, Clone, Debug)]
+pub struct Endpoint {
+    pub url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub api_key: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for Endpoint {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum EndpointRepr {
+            Simple(String),
+            Full {
+                url: String,
+                api_key: Option<String>,
+            },
+        }
+
+        match EndpointRepr::deserialize(deserializer)? {
+            EndpointRepr::Simple(url) => Ok(Endpoint {
+                url,
+                api_key: None,
+            }),
+            EndpointRepr::Full { url, api_key } => Ok(Endpoint { url, api_key }),
+        }
+    }
+}
+
+impl Endpoint {
+    pub fn new(url: impl Into<String>) -> Self {
+        Self {
+            url: url.into(),
+            api_key: None,
+        }
+    }
+}
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
@@ -17,7 +65,7 @@ pub struct Config {
     pub temperature: f32,
     pub max_tokens: u32,
     pub use_max_tokens: bool,
-    pub saved_endpoints: Vec<String>,
+    pub saved_endpoints: Vec<Endpoint>,
     pub font_family: String,
     pub mono_font_family: String,
 }
@@ -34,7 +82,7 @@ impl Default for Config {
             temperature: 0.7,
             max_tokens: 2048,
             use_max_tokens: false,
-            saved_endpoints: vec!["http://localhost:11434/v1".to_string()],
+            saved_endpoints: vec![Endpoint::new("http://localhost:11434/v1")],
             font_family: String::new(),
             mono_font_family: String::new(),
         }
@@ -101,6 +149,8 @@ impl Config {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)
                 .map_err(|e| format!("Could not create config directory: {e}"))?;
+            #[cfg(unix)]
+            set_dir_permissions(parent);
         }
         let contents =
             toml::to_string_pretty(self).map_err(|e| format!("Could not serialize config: {e}"))?;
@@ -130,7 +180,11 @@ impl Config {
             self.max_tokens = 2048;
         }
         if self.saved_endpoints.is_empty() {
-            self.saved_endpoints = vec![self.default_endpoint.clone()];
+            self.saved_endpoints = vec![Endpoint::new(self.default_endpoint.clone())];
         }
+        for ep in &mut self.saved_endpoints {
+            ep.url = ep.url.trim().to_string();
+        }
+        self.saved_endpoints.retain(|ep| !ep.url.is_empty());
     }
 }

@@ -16,6 +16,14 @@ impl Storage {
         let path = Self::db_path();
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).ok();
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = std::fs::set_permissions(
+                    parent,
+                    std::fs::Permissions::from_mode(0o700),
+                );
+            }
         }
         let conn = Connection::open(&path).expect("Failed to open database");
         // Enable foreign keys and WAL mode for better concurrency
@@ -96,12 +104,10 @@ impl Storage {
     pub fn delete_conversation(&self, id: i64) {
         // Use a transaction so both deletes succeed or both fail
         if let Ok(tx) = self.conn.unchecked_transaction() {
-            let r1 = self
-                .conn
-                .execute("DELETE FROM messages WHERE conversation_id = ?1", params![id]);
-            let r2 = self
-                .conn
-                .execute("DELETE FROM conversations WHERE id = ?1", params![id]);
+            let r1 =
+                tx.execute("DELETE FROM messages WHERE conversation_id = ?1", params![id]);
+            let r2 =
+                tx.execute("DELETE FROM conversations WHERE id = ?1", params![id]);
 
             if r1.is_ok() && r2.is_ok() {
                 tx.commit().ok();
@@ -117,8 +123,7 @@ impl Storage {
             Err(_) => return,
         };
 
-        if self
-            .conn
+        if tx
             .execute(
                 "DELETE FROM messages WHERE conversation_id = ?1",
                 params![conversation_id],
@@ -128,30 +133,30 @@ impl Storage {
             return; // tx rolls back on drop
         }
 
-        let mut stmt = match self
-            .conn
-            .prepare("INSERT INTO messages (conversation_id, role, content, position) VALUES (?1, ?2, ?3, ?4)")
         {
-            Ok(s) => s,
-            Err(_) => return,
-        };
-
-        for (i, msg) in messages.iter().enumerate() {
-            let role_str = match msg.role {
-                Role::System => "system",
-                Role::User => "user",
-                Role::Assistant => "assistant",
-            };
-            if stmt
-                .execute(params![conversation_id, role_str, msg.content, i])
-                .is_err()
+            let mut stmt = match tx
+                .prepare("INSERT INTO messages (conversation_id, role, content, position) VALUES (?1, ?2, ?3, ?4)")
             {
-                return; // tx rolls back on drop
+                Ok(s) => s,
+                Err(_) => return,
+            };
+
+            for (i, msg) in messages.iter().enumerate() {
+                let role_str = match msg.role {
+                    Role::System => "system",
+                    Role::User => "user",
+                    Role::Assistant => "assistant",
+                };
+                if stmt
+                    .execute(params![conversation_id, role_str, msg.content, i])
+                    .is_err()
+                {
+                    return; // tx rolls back on drop
+                }
             }
         }
 
-        self.conn
-            .execute(
+        tx.execute(
                 "UPDATE conversations SET updated_at = datetime('now') WHERE id = ?1",
                 params![conversation_id],
             )
