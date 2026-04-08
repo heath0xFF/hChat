@@ -1,0 +1,12 @@
+i'd like to build a feature that enables the ability to use openrouter. let's plan that out
+
+---
+
+ok so walk me through how i switch from the default of ollama locally to openrouter. the settings drop down has a place to switch as well as add in an api key? how does the config.toml file do this?
+
+---
+
+ok so -- need two things:
+
+1. update the readme
+2. need examples of the config somehwere that shows all configuration options. example.config.toml maybe?
