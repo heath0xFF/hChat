@@ -85,21 +85,23 @@ jobs:
             hChat.app.zip
 
   build-macos-x86_64:
-    runs-on: macos-13
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v5
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-apple-darwin
 
       - name: Build
-        run: cargo build --profile dist
+        run: cargo build --profile dist --target x86_64-apple-darwin
 
       - name: Package binary
         run: |
-          cd target/dist
-          tar czf ../../hchat-macos-x86_64.tar.gz hchat
-          cd ../..
+          cd target/x86_64-apple-darwin/dist
+          tar czf ../../../hchat-macos-x86_64.tar.gz hchat
+          cd ../../..
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v5
