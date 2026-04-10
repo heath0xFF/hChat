@@ -35,10 +35,7 @@ impl<'de> Deserialize<'de> for Endpoint {
         }
 
         match EndpointRepr::deserialize(deserializer)? {
-            EndpointRepr::Simple(url) => Ok(Endpoint {
-                url,
-                api_key: None,
-            }),
+            EndpointRepr::Simple(url) => Ok(Endpoint { url, api_key: None }),
             EndpointRepr::Full { url, api_key } => Ok(Endpoint { url, api_key }),
         }
     }
@@ -116,11 +113,16 @@ impl Config {
                 }
             }
             Err(e) if e.kind() == io::ErrorKind::NotFound => {
-                let config = Self::default();
-                if let Err(e) = config.save() {
-                    eprintln!("Warning: could not save default config: {e}");
+                let example_config = include_str!("../example.config.toml");
+                if let Some(parent) = path.parent() {
+                    let _ = fs::create_dir_all(parent);
+                    #[cfg(unix)]
+                    set_dir_permissions(parent);
                 }
-                return config;
+                if let Err(e) = fs::write(&path, example_config) {
+                    eprintln!("Warning: could not write default config: {e}");
+                }
+                return Self::default();
             }
             Err(e) => {
                 eprintln!("Warning: could not read config file: {e}");
