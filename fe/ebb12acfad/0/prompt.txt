@@ -1,0 +1,1 @@
+can you tag and push a new release? i just made some updates to how the config file is initialized
