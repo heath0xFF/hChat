@@ -1,0 +1,62 @@
+# hChat configuration
+# Copy to ~/.config/hchat/config.toml and edit to your liking.
+# All fields are optional — missing fields use the defaults shown here.
+
+# --- Appearance ---
+
+# Dark mode (true) or light mode (false)
+dark_mode = true
+
+# UI scale factor (0.75 - 2.0)
+ui_scale = 1.0
+
+# Proportional font for UI text. Leave empty for egui built-in font.
+# Uses your system's installed fonts (fontconfig on Linux, Core Text on macOS).
+font_family = ""
+
+# Monospace font for code blocks. Leave empty for egui built-in font.
+mono_font_family = ""
+
+# Font sizes (8.0 - 24.0)
+font_size = 14.0
+mono_font_size = 13.0
+
+# --- Model settings ---
+
+# System prompt prepended to every conversation
+system_prompt = ""
+
+# Sampling temperature (0.0 - 2.0)
+temperature = 0.7
+
+# Max tokens for model responses (64 - 16384)
+max_tokens = 2048
+
+# Whether to send max_tokens to the API. When false, the model decides.
+use_max_tokens = false
+
+# --- Endpoints ---
+
+# The active endpoint on launch (must match a url in saved_endpoints)
+default_endpoint = "http://localhost:11434/v1"
+
+# Saved endpoints. Each entry has a url and an optional api_key.
+# Endpoints without an api_key don't send an Authorization header (e.g. local Ollama).
+
+# Local Ollama (no key needed)
+[[saved_endpoints]]
+url = "http://localhost:11434/v1"
+
+# OpenRouter (requires API key from https://openrouter.ai/keys)
+# [[saved_endpoints]]
+# url = "https://openrouter.ai/api/v1"
+# api_key = "sk-or-v1-your-key-here"
+
+# LM Studio (typically no key needed)
+# [[saved_endpoints]]
+# url = "http://localhost:1234/v1"
+
+# Any OpenAI-compatible API
+# [[saved_endpoints]]
+# url = "https://api.example.com/v1"
+# api_key = "your-key-here"
