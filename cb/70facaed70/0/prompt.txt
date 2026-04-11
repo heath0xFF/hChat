@@ -1,0 +1,13 @@
+ok so recently i worked with gemini to add in a side bar panel to show context size and spend (when using openrouter) but the pricing isn't right. 
+
+i want you to check the openrouter documentation for their completion api's (the api's we're using, right?) and confirm if it returns the cost per request. 
+
+basically, i'm trying to replicate what opencode does on their side bar
+
+---
+
+yeah do it
+
+---
+
+ok session spend is "per chat" yeah? should we call it "thread spend" or something else? session spend is different for something like opencode bceause i can switch models in the same session.

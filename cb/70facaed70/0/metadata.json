@@ -1,0 +1,61 @@
+{
+  "cli_version": "0.5.4",
+  "checkpoint_id": "cb70facaed70",
+  "session_id": "ses_2822b3f42ffe1Qn0jYkRxWOjUX",
+  "strategy": "manual-commit",
+  "created_at": "2026-04-11T18:48:14.371797Z",
+  "branch": "main",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "src/api.rs",
+    "src/app.rs"
+  ],
+  "agent": "OpenCode",
+  "model": "anthropic/claude-opus-4.6",
+  "turn_id": "25d98840e216",
+  "token_usage": {
+    "input_tokens": 264660,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 2136975,
+    "output_tokens": 7665,
+    "api_call_count": 35
+  },
+  "session_metrics": {
+    "turn_count": 3
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-04-11T18:48:13.617186Z",
+    "agent_lines": 17,
+    "agent_removed": 22,
+    "human_added": 2,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 19,
+    "total_lines_changed": 43,
+    "agent_percentage": 90.69767441860465,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 15,
+      "agent_lines_removed": 22
+    },
+    {
+      "checkpoint_number": 3,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 17,
+      "agent_lines_removed": 22
+    }
+  ]
+}
