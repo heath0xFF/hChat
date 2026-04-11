@@ -1,0 +1,1 @@
+add instructions for updating via homebrew to the readme

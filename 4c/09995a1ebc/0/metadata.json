@@ -1,0 +1,39 @@
+{
+  "cli_version": "0.5.3",
+  "checkpoint_id": "4c09995a1ebc",
+  "session_id": "ses_282eb4a02ffe6aw0J6HCVROs7z",
+  "strategy": "manual-commit",
+  "created_at": "2026-04-11T15:31:46.97119Z",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "README.md"
+  ],
+  "agent": "OpenCode",
+  "model": "anthropic/claude-opus-4.6",
+  "turn_id": "813b0a53643c",
+  "checkpoint_transcript_start": 47,
+  "transcript_lines_at_start": 47,
+  "token_usage": {
+    "input_tokens": 130754,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 129935,
+    "output_tokens": 294,
+    "api_call_count": 5
+  },
+  "session_metrics": {
+    "turn_count": 7
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-04-11T15:31:46.412626Z",
+    "agent_lines": 6,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 6,
+    "total_lines_changed": 6,
+    "agent_percentage": 100,
+    "metric_version": 2
+  }
+}
