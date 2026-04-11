@@ -80,7 +80,15 @@ pub async fn fetch_models(base_url: &str, api_key: Option<&str>) -> Result<Vec<S
         .connect_timeout(CONNECT_TIMEOUT)
         .build()
         .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
-    let url = base_url.trim_end_matches('/');
+
+    let mut url = base_url.trim_end_matches('/').to_string();
+
+    // Auto-fix OpenRouter URLs (users often provide just the domain or the completions endpoint)
+    if url.contains("openrouter.ai") {
+        url = "https://openrouter.ai/api/v1".to_string();
+    } else if url.ends_with("/chat/completions") {
+        url = url.trim_end_matches("/chat/completions").to_string();
+    }
 
     // Try OpenAI-standard /v1/models first (works for OpenRouter, LM Studio, vLLM, etc.)
     let models_url = if url.ends_with("/v1") {
@@ -92,6 +100,11 @@ pub async fn fetch_models(base_url: &str, api_key: Option<&str>) -> Result<Vec<S
     let mut request = client.get(&models_url);
     if let Some(key) = api_key {
         request = request.bearer_auth(key);
+    }
+    if url.contains("openrouter.ai") {
+        request = request
+            .header("HTTP-Referer", "https://github.com/hhheath/hChat")
+            .header("X-Title", "hChat");
     }
 
     if let Ok(resp) = request.send().await {
@@ -153,7 +166,15 @@ pub fn stream_chat(
                 return;
             }
         };
-        let url = format!("{}/chat/completions", base_url.trim_end_matches('/'));
+        let mut base_url = base_url.trim_end_matches('/').to_string();
+
+        if base_url.contains("openrouter.ai") {
+            base_url = "https://openrouter.ai/api/v1".to_string();
+        } else if base_url.ends_with("/chat/completions") {
+            base_url = base_url.trim_end_matches("/chat/completions").to_string();
+        }
+
+        let url = format!("{}/chat/completions", base_url);
 
         let req = ChatRequest {
             model,
@@ -298,4 +319,15 @@ fn newline_positions(s: &str) -> impl Iterator<Item = usize> + '_ {
     s.bytes()
         .enumerate()
         .filter_map(|(i, b)| if b == b'\n' { Some(i) } else { None })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_openrouter_fetch() {
+        let models = fetch_models("https://openrouter.ai/api/v1", None).await;
+        println!("Result: {:?}", models);
+    }
 }

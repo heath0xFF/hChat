@@ -78,7 +78,7 @@ impl ChatApp {
             models_rx: None,
             cancel_token: None,
             runtime,
-            models_loading: true,
+            models_loading: false,
             error: None,
             system_prompt: config.system_prompt.clone(),
             temperature: config.temperature,
