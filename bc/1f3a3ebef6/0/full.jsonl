@@ -13,7 +13,7 @@
     },
     "time": {
       "created": 1775922275084,
-      "updated": 1775923036175
+      "updated": 1775923041920
     }
   },
   "messages": [
@@ -9066,21 +9066,24 @@
           "cwd": "/Users/heath/code/hChat",
           "root": "/Users/heath/code/hChat"
         },
-        "cost": 0,
+        "cost": 0.00493,
         "tokens": {
-          "input": 0,
-          "output": 0,
+          "total": 89231,
+          "input": 2285,
+          "output": 30,
           "reasoning": 0,
           "cache": {
-            "read": 0,
-            "write": 0
+            "write": 0,
+            "read": 86916
           }
         },
         "modelID": "google/gemini-3.1-pro-preview",
         "providerID": "openrouter",
         "time": {
-          "created": 1775923036136
+          "created": 1775923036136,
+          "completed": 1775923041882
         },
+        "finish": "tool-calls",
         "id": "msg_d7d42ffe8001pufKel5sp2TsUY",
         "sessionID": "ses_282c89cf3ffeiP4M9aPox8PmOz"
       },
@@ -9097,17 +9100,22 @@
           "tool": "bash",
           "callID": "tool_bash_od1S4iQgGgluRUTU2LHR",
           "state": {
-            "metadata": {
-              "output": "",
-              "description": "Commit the changes"
-            },
-            "status": "running",
+            "status": "completed",
             "input": {
               "description": "Commit the changes",
               "command": "git commit -am \"fix: ensure OpenRouter endpoints are correctly normalized and fetch models works properly\""
             },
+            "output": "[main 03df1de] fix: ensure OpenRouter endpoints are correctly normalized and fetch models works properly\n 2 files changed, 35 insertions(+), 3 deletions(-)\n",
+            "metadata": {
+              "output": "[main 03df1de] fix: ensure OpenRouter endpoints are correctly normalized and fetch models works properly\n 2 files changed, 35 insertions(+), 3 deletions(-)\n",
+              "exit": 0,
+              "description": "Commit the changes",
+              "truncated": false
+            },
+            "title": "Commit the changes",
             "time": {
-              "start": 1775923039416
+              "start": 1775923039416,
+              "end": 1775923041808
             }
           },
           "metadata": {
@@ -9126,6 +9134,97 @@
           "id": "prt_d7d430cb6001plqqTR4QrMzNkf",
           "sessionID": "ses_282c89cf3ffeiP4M9aPox8PmOz",
           "messageID": "msg_d7d42ffe8001pufKel5sp2TsUY"
+        },
+        {
+          "reason": "tool-calls",
+          "snapshot": "bf70c391ee97ef1145cd363ff7f630ca0b267b54",
+          "type": "step-finish",
+          "tokens": {
+            "total": 89231,
+            "input": 2285,
+            "output": 30,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 86916
+            }
+          },
+          "cost": 0.00493,
+          "id": "prt_d7d4316100025HPiVZqi3QR1UM",
+          "sessionID": "ses_282c89cf3ffeiP4M9aPox8PmOz",
+          "messageID": "msg_d7d42ffe8001pufKel5sp2TsUY"
+        }
+      ]
+    },
+    {
+      "info": {
+        "parentID": "msg_d7d3fa873001KmfozXl5tCmV8R",
+        "role": "assistant",
+        "mode": "build",
+        "agent": "build",
+        "variant": "high",
+        "path": {
+          "cwd": "/Users/heath/code/hChat",
+          "root": "/Users/heath/code/hChat"
+        },
+        "cost": 0.007984,
+        "tokens": {
+          "total": 89537,
+          "input": 2378,
+          "output": 269,
+          "reasoning": 0,
+          "cache": {
+            "write": 0,
+            "read": 86890
+          }
+        },
+        "modelID": "google/gemini-3.1-pro-preview",
+        "providerID": "openrouter",
+        "time": {
+          "created": 1775923041885,
+          "completed": 1775923046829
+        },
+        "finish": "stop",
+        "id": "msg_d7d43165d001qSPCxGcAvOdxD4",
+        "sessionID": "ses_282c89cf3ffeiP4M9aPox8PmOz"
+      },
+      "parts": [
+        {
+          "snapshot": "bf70c391ee97ef1145cd363ff7f630ca0b267b54",
+          "type": "step-start",
+          "id": "prt_d7d432152001LxnpC15uz90h2V",
+          "sessionID": "ses_282c89cf3ffeiP4M9aPox8PmOz",
+          "messageID": "msg_d7d43165d001qSPCxGcAvOdxD4"
+        },
+        {
+          "type": "text",
+          "text": "I have investigated the issue and found two main things that were causing problems with OpenRouter:\n\n1. **Incorrect URL normalizations**: For OpenRouter URLs, they sometimes omit the correct `/api/v1` path which breaks `fetch_models`. Now the logic correctly normalizes any url containing `openrouter.ai` to `https://openrouter.ai/api/v1`. Additionally, it strips `/chat/completions` from URLs if they are incorrectly provided by the user.\n\n2. **Early `models_loading` Return issue**: The app initialized `models_loading` to `true` but then also called `app.fetch_models()` at the end of `ChatApp::new()`. Since the new guard Claude introduced simply returned if `models_loading` was true, the initial fetch at startup was immediately short-circuiting! Now `models_loading` initializes to `false` when the app starts, so `app.fetch_models()` executes correctly on start. Also, I included the missing `HTTP-Referer` and `X-Title` headers for `fetch_models` when it targets OpenRouter, mimicking what's passed for chat.\n\nI've committed these fixes. It should now successfully list models when you switch endpoints to OpenRouter.",
+          "time": {
+            "start": 1775923046705,
+            "end": 1775923046705
+          },
+          "id": "prt_d7d432154001k7zzogDR3xuQCL",
+          "sessionID": "ses_282c89cf3ffeiP4M9aPox8PmOz",
+          "messageID": "msg_d7d43165d001qSPCxGcAvOdxD4"
+        },
+        {
+          "reason": "stop",
+          "snapshot": "bf70c391ee97ef1145cd363ff7f630ca0b267b54",
+          "type": "step-finish",
+          "tokens": {
+            "total": 89537,
+            "input": 2378,
+            "output": 269,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 86890
+            }
+          },
+          "cost": 0.007984,
+          "id": "prt_d7d432933001FrJSgR96usuhvT",
+          "sessionID": "ses_282c89cf3ffeiP4M9aPox8PmOz",
+          "messageID": "msg_d7d43165d001qSPCxGcAvOdxD4"
         }
       ]
     }
