@@ -1,0 +1,34 @@
+i want to fix a bug and i want to add a feature: 
+
+1. bug: on launch with the app installed via homebrew, the text size is very small. i want you to find the bug and tell me about it. don't fix it yet. i am also using aerospace as my window tiling manager
+2. i want to add a side bar similar to what opencode has where it tells me the tokens in context, the cost, etc.
+
+---
+
+ok i want you to fix the bug. 
+
+for the sidebar -- i want the default state to be open, and collapse when the user clicks the button. then for the cost estimate -- what happens when someone uses a paid endpoint (like openrouter)?
+
+---
+
+what happened? continue
+
+---
+
+does the opencode api not return a cost with the response? can you look that up?
+
+---
+
+continue
+
+---
+
+continue
+
+---
+
+continue
+
+---
+
+clean up the unnecessary files you've created
