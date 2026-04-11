@@ -94,22 +94,27 @@ impl Config {
     }
 
     pub fn load() -> Self {
-        let path = match Self::path() {
-            Ok(p) => p,
+        match Self::try_load() {
+            Ok(config) => config,
             Err(e) => {
                 eprintln!("Warning: {e}, using default config");
-                return Self::default();
+                Self::default()
             }
-        };
+        }
+    }
+
+    /// Load config from disk, returning an error string on failure instead of
+    /// silently falling back to defaults.
+    pub fn try_load() -> Result<Self, String> {
+        let path = Self::path()?;
 
         match fs::metadata(&path) {
             Ok(meta) => {
                 if meta.len() > MAX_CONFIG_SIZE {
-                    eprintln!(
-                        "Warning: config file too large ({} bytes), using defaults",
+                    return Err(format!(
+                        "Config file too large ({} bytes, max {MAX_CONFIG_SIZE})",
                         meta.len()
-                    );
-                    return Self::default();
+                    ));
                 }
             }
             Err(e) if e.kind() == io::ErrorKind::NotFound => {
@@ -122,28 +127,19 @@ impl Config {
                 if let Err(e) = fs::write(&path, example_config) {
                     eprintln!("Warning: could not write default config: {e}");
                 }
-                return Self::default();
+                return Ok(Self::default());
             }
             Err(e) => {
-                eprintln!("Warning: could not read config file: {e}");
-                return Self::default();
+                return Err(format!("Could not read config file: {e}"));
             }
         }
 
-        match fs::read_to_string(&path) {
-            Ok(contents) => {
-                let mut config: Config = toml::from_str(&contents).unwrap_or_else(|e| {
-                    eprintln!("Warning: could not parse config: {e}, using defaults");
-                    Self::default()
-                });
-                config.sanitize();
-                config
-            }
-            Err(e) => {
-                eprintln!("Warning: could not read config file: {e}");
-                Self::default()
-            }
-        }
+        let contents =
+            fs::read_to_string(&path).map_err(|e| format!("Could not read config file: {e}"))?;
+        let mut config: Config =
+            toml::from_str(&contents).map_err(|e| format!("Could not parse config: {e}"))?;
+        config.sanitize();
+        Ok(config)
     }
 
     pub fn save(&self) -> Result<(), String> {

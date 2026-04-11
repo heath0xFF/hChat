@@ -111,6 +111,9 @@ impl ChatApp {
     }
 
     fn fetch_models(&mut self) {
+        if self.models_loading {
+            return; // fetch already in progress
+        }
         let base_url = self.base_url.clone();
         let api_key = self.current_api_key().map(|s| s.to_string());
         let (tx, rx) = mpsc::unbounded_channel();
@@ -299,9 +302,8 @@ impl ChatApp {
             max_tokens,
             api_key,
         };
-        self.runtime.spawn(async move {
-            api::stream_chat(params, tx, cancel)
-        });
+        self.runtime
+            .spawn(async move { api::stream_chat(params, tx, cancel) });
     }
 
     fn stop_streaming(&mut self) {
@@ -311,9 +313,11 @@ impl ChatApp {
         self.streaming = false;
         self.rx = None;
         if let Some(last) = self.messages.last()
-            && last.role == Role::Assistant && last.content.is_empty() {
-                self.messages.pop();
-            }
+            && last.role == Role::Assistant
+            && last.content.is_empty()
+        {
+            self.messages.pop();
+        }
     }
 
     fn regenerate(&mut self) {
@@ -321,10 +325,11 @@ impl ChatApp {
             return;
         }
         if let Some(last) = self.messages.last()
-            && last.role == Role::Assistant {
-                self.messages.pop();
-                self.start_streaming();
-            }
+            && last.role == Role::Assistant
+        {
+            self.messages.pop();
+            self.start_streaming();
+        }
     }
 
     fn edit_and_resend(&mut self, index: usize) {
@@ -386,9 +391,10 @@ impl ChatApp {
                 match event {
                     StreamEvent::Token(token) => {
                         if let Some(last) = self.messages.last_mut()
-                            && last.role == Role::Assistant {
-                                last.content.push_str(&token);
-                            }
+                            && last.role == Role::Assistant
+                        {
+                            last.content.push_str(&token);
+                        }
                     }
                     StreamEvent::UsageInfo(usage) => {
                         self.last_usage = Some(usage);
@@ -406,9 +412,11 @@ impl ChatApp {
                         self.cancel_token = None;
                         self.rx = None;
                         if let Some(last) = self.messages.last()
-                            && last.role == Role::Assistant && last.content.is_empty() {
-                                self.messages.pop();
-                            }
+                            && last.role == Role::Assistant
+                            && last.content.is_empty()
+                        {
+                            self.messages.pop();
+                        }
                         break;
                     }
                     _ => {}
@@ -419,6 +427,73 @@ impl ChatApp {
         if just_finished_streaming && !self.messages.is_empty() {
             self.save_current();
         }
+    }
+
+    pub fn reload_config(&mut self, ctx: &egui::Context) {
+        let new_config = match Config::try_load() {
+            Ok(c) => c,
+            Err(e) => {
+                self.error = Some(format!("Failed to reload config: {e}"));
+                return;
+            }
+        };
+
+        // Reload fonts only if font settings actually changed
+        let fonts_changed = self.config.font_family != new_config.font_family
+            || self.config.mono_font_family != new_config.mono_font_family
+            || (self.config.font_size - new_config.font_size).abs() > f32::EPSILON
+            || (self.config.mono_font_size - new_config.mono_font_size).abs() > f32::EPSILON;
+        if fonts_changed {
+            configure_fonts(ctx, &new_config);
+        }
+
+        // Update theme
+        if self.dark_mode != new_config.dark_mode {
+            self.dark_mode = new_config.dark_mode;
+            apply_theme(ctx, self.dark_mode);
+        }
+
+        // Update UI scale
+        if (self.config.ui_scale - new_config.ui_scale).abs() > f32::EPSILON {
+            ctx.set_pixels_per_point(new_config.ui_scale);
+        }
+
+        // Apply new settings
+        self.system_prompt = new_config.system_prompt.clone();
+        self.temperature = new_config.temperature;
+        self.max_tokens = new_config.max_tokens;
+        self.use_max_tokens = new_config.use_max_tokens;
+
+        // Capture old endpoint state for change detection
+        let old_url = self.base_url.clone();
+        let old_api_key = self.current_api_key().map(|s| s.to_string());
+
+        // Update endpoints list
+        self.saved_endpoints = new_config.saved_endpoints.clone();
+
+        // Apply default_endpoint (symmetric with save which writes base_url -> default_endpoint)
+        self.base_url = new_config.default_endpoint.clone();
+
+        // If the chosen endpoint isn't in the saved list, fallback to first
+        if !self
+            .saved_endpoints
+            .iter()
+            .any(|ep| ep.url == self.base_url)
+        {
+            if let Some(first) = self.saved_endpoints.first() {
+                self.base_url = first.url.clone();
+            }
+        }
+
+        // Only re-fetch models if the endpoint URL or API key actually changed
+        let new_api_key = self.current_api_key().map(|s| s.to_string());
+        if (self.base_url != old_url || new_api_key != old_api_key) && !self.streaming {
+            self.fetch_models();
+        }
+
+        self.config = new_config;
+        self.error = None;
+        ctx.request_repaint();
     }
 }
 
@@ -452,7 +527,10 @@ fn load_custom_fonts(ctx: &egui::Context, config: &Config) {
                 family.insert(0, "custom_proportional".to_owned());
             }
         } else {
-            eprintln!("Warning: font '{}' not found, using default", config.font_family);
+            eprintln!(
+                "Warning: font '{}' not found, using default",
+                config.font_family
+            );
         }
     }
 
@@ -465,17 +543,17 @@ fn load_custom_fonts(ctx: &egui::Context, config: &Config) {
                 family.insert(0, "custom_monospace".to_owned());
             }
         } else {
-            eprintln!("Warning: font '{}' not found, using default", config.mono_font_family);
+            eprintln!(
+                "Warning: font '{}' not found, using default",
+                config.mono_font_family
+            );
         }
     }
 
     ctx.set_fonts(fonts);
 }
 
-fn lookup_font(
-    source: &font_kit::source::SystemSource,
-    name: &str,
-) -> Option<egui::FontData> {
+fn lookup_font(source: &font_kit::source::SystemSource, name: &str) -> Option<egui::FontData> {
     use font_kit::family_name::FamilyName;
     use font_kit::properties::Properties;
 
@@ -505,9 +583,8 @@ impl eframe::App for ChatApp {
         }
 
         // Keyboard shortcuts
-        let new_chat = ui.input(|i| {
-            i.key_pressed(egui::Key::N) && (i.modifiers.ctrl || i.modifiers.command)
-        });
+        let new_chat =
+            ui.input(|i| i.key_pressed(egui::Key::N) && (i.modifiers.ctrl || i.modifiers.command));
         if new_chat {
             self.new_conversation();
         }
@@ -516,7 +593,11 @@ impl eframe::App for ChatApp {
         egui::Panel::top("top_bar").show_inside(ui, |ui| {
             ui.horizontal(|ui| {
                 let sidebar_icon = if self.show_sidebar { "◀" } else { "▶" };
-                if ui.button(sidebar_icon).on_hover_text("Toggle sidebar").clicked() {
+                if ui
+                    .button(sidebar_icon)
+                    .on_hover_text("Toggle sidebar")
+                    .clicked()
+                {
                     self.show_sidebar = !self.show_sidebar;
                 }
 
@@ -540,7 +621,10 @@ impl eframe::App for ChatApp {
                         .width(200.0)
                         .show_ui(ui, |ui| {
                             for ep in &self.saved_endpoints {
-                                if ui.selectable_label(self.base_url == ep.url, &ep.url).clicked() {
+                                if ui
+                                    .selectable_label(self.base_url == ep.url, &ep.url)
+                                    .clicked()
+                                {
                                     new_url = Some(ep.url.clone());
                                 }
                             }
@@ -570,7 +654,11 @@ impl eframe::App for ChatApp {
                 ui.separator();
 
                 let settings_label = if self.show_settings { "⚙ ▼" } else { "⚙" };
-                if ui.button(settings_label).on_hover_text("Settings").clicked() {
+                if ui
+                    .button(settings_label)
+                    .on_hover_text("Settings")
+                    .clicked()
+                {
                     self.show_settings = !self.show_settings;
                 }
 
@@ -703,7 +791,10 @@ impl eframe::App for ChatApp {
                     );
                     ui.label("Size:");
                     if ui
-                        .add(egui::Slider::new(&mut self.config.mono_font_size, 8.0..=24.0).step_by(1.0))
+                        .add(
+                            egui::Slider::new(&mut self.config.mono_font_size, 8.0..=24.0)
+                                .step_by(1.0),
+                        )
                         .changed()
                     {
                         fonts_changed = true;
@@ -734,6 +825,9 @@ impl eframe::App for ChatApp {
                         if let Err(e) = self.config.save() {
                             self.error = Some(format!("Failed to save settings: {e}"));
                         }
+                    }
+                    if ui.button("Reload config").clicked() {
+                        self.reload_config(&ctx);
                     }
                     if ui.button("Reset to defaults").clicked() {
                         self.config = Config::default();
@@ -824,176 +918,184 @@ impl eframe::App for ChatApp {
 
         // Sidebar
         if self.show_sidebar {
-            egui::Panel::left("sidebar").default_size(200.0).show_inside(ui, |ui| {
-                ui.horizontal(|ui| {
-                    if ui.button("+ New Chat").clicked() {
-                        self.new_conversation();
-                    }
-                    if ui.button("🔍").on_hover_text("Search").clicked() {
-                        self.show_search = !self.show_search;
-                    }
-                });
-
-                if self.show_search {
-                    ui.separator();
-                    let search_changed = ui
-                        .add(
-                            egui::TextEdit::singleline(&mut self.search_query)
-                                .hint_text("Search conversations...")
-                                .desired_width(f32::INFINITY),
-                        )
-                        .changed();
-
-                    if search_changed {
-                        if self.search_query.is_empty() {
-                            self.search_results.clear();
-                        } else {
-                            self.search_results = self.storage.search(&self.search_query);
+            egui::Panel::left("sidebar")
+                .default_size(200.0)
+                .show_inside(ui, |ui| {
+                    ui.horizontal(|ui| {
+                        if ui.button("+ New Chat").clicked() {
+                            self.new_conversation();
                         }
-                    }
+                        if ui.button("🔍").on_hover_text("Search").clicked() {
+                            self.show_search = !self.show_search;
+                        }
+                    });
 
-                    if !self.search_query.is_empty() && !self.search_results.is_empty() {
-                        let mut selected_conv = None;
-                        for (conv_id, title, snippet) in &self.search_results {
-                            if ui
-                                .button(title.as_str())
-                                .on_hover_text(snippet.as_str())
-                                .clicked()
-                            {
-                                selected_conv = Some(*conv_id);
+                    if self.show_search {
+                        ui.separator();
+                        let search_changed = ui
+                            .add(
+                                egui::TextEdit::singleline(&mut self.search_query)
+                                    .hint_text("Search conversations...")
+                                    .desired_width(f32::INFINITY),
+                            )
+                            .changed();
+
+                        if search_changed {
+                            if self.search_query.is_empty() {
+                                self.search_results.clear();
+                            } else {
+                                self.search_results = self.storage.search(&self.search_query);
                             }
                         }
-                        if let Some(conv_id) = selected_conv {
-                            self.load_conversation(conv_id);
-                            self.show_search = false;
-                            self.search_query.clear();
-                            self.search_results.clear();
+
+                        if !self.search_query.is_empty() && !self.search_results.is_empty() {
+                            let mut selected_conv = None;
+                            for (conv_id, title, snippet) in &self.search_results {
+                                if ui
+                                    .button(title.as_str())
+                                    .on_hover_text(snippet.as_str())
+                                    .clicked()
+                                {
+                                    selected_conv = Some(*conv_id);
+                                }
+                            }
+                            if let Some(conv_id) = selected_conv {
+                                self.load_conversation(conv_id);
+                                self.show_search = false;
+                                self.search_query.clear();
+                                self.search_results.clear();
+                            }
                         }
                     }
-                }
 
-                ui.separator();
+                    ui.separator();
 
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    let mut action: Option<SidebarAction> = None;
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        let mut action: Option<SidebarAction> = None;
 
-                    for (id, title) in &self.conversation_list {
-                        let is_current = self.current_conversation_id == Some(*id);
+                        for (id, title) in &self.conversation_list {
+                            let is_current = self.current_conversation_id == Some(*id);
 
-                        // Inline rename mode
-                        if self.renaming_conversation == Some(*id) {
-                            ui.horizontal(|ui| {
-                                let resp = ui.text_edit_singleline(&mut self.rename_buffer);
-                                if resp.lost_focus()
-                                    || ui.input(|i| i.key_pressed(egui::Key::Enter))
-                                {
-                                    action = Some(SidebarAction::FinishRename(*id));
-                                }
-                                if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-                                    self.renaming_conversation = None;
-                                    self.rename_buffer.clear();
-                                }
-                            });
-                        } else {
-                            // Kebab menu pinned right, title fills remaining space
-                            let row_height = ui.spacing().interact_size.y;
-                            let full_width = ui.available_width();
-                            let (row_rect, _) = ui.allocate_exact_size(
-                                egui::vec2(full_width, row_height),
-                                egui::Sense::hover(),
-                            );
+                            // Inline rename mode
+                            if self.renaming_conversation == Some(*id) {
+                                ui.horizontal(|ui| {
+                                    let resp = ui.text_edit_singleline(&mut self.rename_buffer);
+                                    if resp.lost_focus()
+                                        || ui.input(|i| i.key_pressed(egui::Key::Enter))
+                                    {
+                                        action = Some(SidebarAction::FinishRename(*id));
+                                    }
+                                    if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
+                                        self.renaming_conversation = None;
+                                        self.rename_buffer.clear();
+                                    }
+                                });
+                            } else {
+                                // Kebab menu pinned right, title fills remaining space
+                                let row_height = ui.spacing().interact_size.y;
+                                let full_width = ui.available_width();
+                                let (row_rect, _) = ui.allocate_exact_size(
+                                    egui::vec2(full_width, row_height),
+                                    egui::Sense::hover(),
+                                );
 
-                            // Kebab button on the right
-                            let kebab_width = 20.0;
-                            let kebab_rect = egui::Rect::from_min_size(
-                                egui::pos2(row_rect.right() - kebab_width, row_rect.top()),
-                                egui::vec2(kebab_width, row_height),
-                            );
-                            let mut kebab_ui = ui.new_child(egui::UiBuilder::new().max_rect(kebab_rect));
-                            kebab_ui.menu_button("...", |ui| {
-                                if ui.button("Rename").clicked() {
-                                    action = Some(SidebarAction::StartRename(*id));
-                                    ui.close();
-                                }
-                                if ui.button("Export").clicked() {
-                                    action = Some(SidebarAction::Export(*id));
-                                    ui.close();
-                                }
-                                if ui.button("Delete").clicked() {
-                                    action = Some(SidebarAction::Delete(*id));
-                                    ui.close();
-                                }
-                            });
+                                // Kebab button on the right
+                                let kebab_width = 20.0;
+                                let kebab_rect = egui::Rect::from_min_size(
+                                    egui::pos2(row_rect.right() - kebab_width, row_rect.top()),
+                                    egui::vec2(kebab_width, row_height),
+                                );
+                                let mut kebab_ui =
+                                    ui.new_child(egui::UiBuilder::new().max_rect(kebab_rect));
+                                kebab_ui.menu_button("...", |ui| {
+                                    if ui.button("Rename").clicked() {
+                                        action = Some(SidebarAction::StartRename(*id));
+                                        ui.close();
+                                    }
+                                    if ui.button("Export").clicked() {
+                                        action = Some(SidebarAction::Export(*id));
+                                        ui.close();
+                                    }
+                                    if ui.button("Delete").clicked() {
+                                        action = Some(SidebarAction::Delete(*id));
+                                        ui.close();
+                                    }
+                                });
 
-                            // Title label fills the rest
-                            let title_rect = egui::Rect::from_min_max(
-                                row_rect.min,
-                                egui::pos2(row_rect.right() - kebab_width - 4.0, row_rect.bottom()),
-                            );
-                            let mut title_ui = ui.new_child(egui::UiBuilder::new().max_rect(title_rect));
-                            let resp = title_ui.add(
-                                egui::Label::new(
-                                    egui::RichText::new(title.as_str())
-                                        .color(if is_current {
+                                // Title label fills the rest
+                                let title_rect = egui::Rect::from_min_max(
+                                    row_rect.min,
+                                    egui::pos2(
+                                        row_rect.right() - kebab_width - 4.0,
+                                        row_rect.bottom(),
+                                    ),
+                                );
+                                let mut title_ui =
+                                    ui.new_child(egui::UiBuilder::new().max_rect(title_rect));
+                                let resp = title_ui.add(
+                                    egui::Label::new(egui::RichText::new(title.as_str()).color(
+                                        if is_current {
                                             title_ui.visuals().strong_text_color()
                                         } else {
                                             title_ui.visuals().text_color()
-                                        }),
-                                )
-                                .truncate()
-                                .selectable(false)
-                                .sense(egui::Sense::click()),
-                            );
+                                        },
+                                    ))
+                                    .truncate()
+                                    .selectable(false)
+                                    .sense(egui::Sense::click()),
+                                );
 
-                            if resp.clicked() && !is_current {
-                                action = Some(SidebarAction::Load(*id));
-                            }
+                                if resp.clicked() && !is_current {
+                                    action = Some(SidebarAction::Load(*id));
+                                }
 
-                            // Right-click context menu
-                            resp.context_menu(|ui| {
-                                if ui.button("Rename").clicked() {
-                                    action = Some(SidebarAction::StartRename(*id));
-                                    ui.close();
-                                }
-                                if ui.button("Export").clicked() {
-                                    action = Some(SidebarAction::Export(*id));
-                                    ui.close();
-                                }
-                                if ui.button("Delete").clicked() {
-                                    action = Some(SidebarAction::Delete(*id));
-                                    ui.close();
-                                }
-                            });
+                                // Right-click context menu
+                                resp.context_menu(|ui| {
+                                    if ui.button("Rename").clicked() {
+                                        action = Some(SidebarAction::StartRename(*id));
+                                        ui.close();
+                                    }
+                                    if ui.button("Export").clicked() {
+                                        action = Some(SidebarAction::Export(*id));
+                                        ui.close();
+                                    }
+                                    if ui.button("Delete").clicked() {
+                                        action = Some(SidebarAction::Delete(*id));
+                                        ui.close();
+                                    }
+                                });
+                            }
+                            ui.separator();
                         }
-                        ui.separator();
-                    }
 
-                    match action {
-                        Some(SidebarAction::Load(id)) => self.load_conversation(id),
-                        Some(SidebarAction::Delete(id)) => self.delete_conversation(id),
-                        Some(SidebarAction::Export(id)) => {
-                            let md = self.storage.export_markdown(id);
-                            self.copy_to_clipboard(&md);
-                        }
-                        Some(SidebarAction::StartRename(id)) => {
-                            if let Some((_, title)) = self.conversation_list.iter().find(|(cid, _)| *cid == id) {
-                                self.rename_buffer = title.clone();
+                        match action {
+                            Some(SidebarAction::Load(id)) => self.load_conversation(id),
+                            Some(SidebarAction::Delete(id)) => self.delete_conversation(id),
+                            Some(SidebarAction::Export(id)) => {
+                                let md = self.storage.export_markdown(id);
+                                self.copy_to_clipboard(&md);
                             }
-                            self.renaming_conversation = Some(id);
-                        }
-                        Some(SidebarAction::FinishRename(id)) => {
-                            let new_title = self.rename_buffer.trim().to_string();
-                            if !new_title.is_empty() {
-                                self.storage.update_conversation_title(id, &new_title);
-                                self.refresh_conversation_list();
+                            Some(SidebarAction::StartRename(id)) => {
+                                if let Some((_, title)) =
+                                    self.conversation_list.iter().find(|(cid, _)| *cid == id)
+                                {
+                                    self.rename_buffer = title.clone();
+                                }
+                                self.renaming_conversation = Some(id);
                             }
-                            self.renaming_conversation = None;
-                            self.rename_buffer.clear();
+                            Some(SidebarAction::FinishRename(id)) => {
+                                let new_title = self.rename_buffer.trim().to_string();
+                                if !new_title.is_empty() {
+                                    self.storage.update_conversation_title(id, &new_title);
+                                    self.refresh_conversation_list();
+                                }
+                                self.renaming_conversation = None;
+                                self.rename_buffer.clear();
+                            }
+                            None => {}
                         }
-                        None => {}
-                    }
+                    });
                 });
-            });
         }
 
         // Central message area
@@ -1002,99 +1104,108 @@ impl eframe::App for ChatApp {
             .fill(panel_fill)
             .inner_margin(egui::Margin::symmetric(16, 0))
             .show(ui, |ui| {
-        egui::ScrollArea::vertical()
-            .auto_shrink([false; 2])
-            .stick_to_bottom(true)
-            .show(ui, |ui| {
-                if self.messages.is_empty() {
-                    ui.vertical_centered(|ui| {
-                        ui.add_space(100.0);
-                        ui.heading("hChat");
-                        ui.label("Lightweight local LLM chat");
-                        ui.label("Ctrl+N to start a new conversation");
+                egui::ScrollArea::vertical()
+                    .auto_shrink([false; 2])
+                    .stick_to_bottom(true)
+                    .show(ui, |ui| {
+                        if self.messages.is_empty() {
+                            ui.vertical_centered(|ui| {
+                                ui.add_space(100.0);
+                                ui.heading("hChat");
+                                ui.label("Lightweight local LLM chat");
+                                ui.label("Ctrl+N to start a new conversation");
+                            });
+                            return;
+                        }
+
+                        let mut action: Option<MessageAction> = None;
+                        let msg_count = self.messages.len();
+
+                        for (i, msg) in self.messages.iter().enumerate() {
+                            let (prefix, color) = match msg.role {
+                                Role::User => ("You", egui::Color32::from_rgb(100, 180, 255)),
+                                Role::Assistant => ("AI", egui::Color32::from_rgb(100, 255, 150)),
+                                Role::System => ("System", egui::Color32::GRAY),
+                            };
+
+                            ui.horizontal(|ui| {
+                                ui.colored_label(color, format!("{prefix}:"));
+                                ui.with_layout(
+                                    egui::Layout::right_to_left(egui::Align::Center),
+                                    |ui| {
+                                        if ui.small_button("📋").on_hover_text("Copy").clicked() {
+                                            action = Some(MessageAction::Copy(i));
+                                        }
+                                        if msg.role == Role::User
+                                            && !self.streaming
+                                            && ui.small_button("✏").on_hover_text("Edit").clicked()
+                                        {
+                                            action = Some(MessageAction::StartEdit(i));
+                                        }
+                                        if msg.role == Role::Assistant
+                                            && i == msg_count - 1
+                                            && !self.streaming
+                                            && ui
+                                                .small_button("🔄")
+                                                .on_hover_text("Regenerate")
+                                                .clicked()
+                                        {
+                                            action = Some(MessageAction::Regenerate);
+                                        }
+                                    },
+                                );
+                            });
+
+                            if self.editing_message == Some(i) {
+                                ui.add(
+                                    egui::TextEdit::multiline(&mut self.edit_buffer)
+                                        .desired_width(f32::INFINITY)
+                                        .desired_rows(3),
+                                );
+                                ui.horizontal(|ui| {
+                                    if ui.button("Send").clicked() {
+                                        action = Some(MessageAction::FinishEdit(i));
+                                    }
+                                    if ui.button("Cancel").clicked() {
+                                        action = Some(MessageAction::CancelEdit);
+                                    }
+                                });
+                            } else if msg.role == Role::Assistant && !msg.content.is_empty() {
+                                CommonMarkViewer::new().show(
+                                    ui,
+                                    &mut self.commonmark_cache,
+                                    &msg.content,
+                                );
+                            } else {
+                                ui.label(&msg.content);
+                            }
+
+                            ui.add_space(8.0);
+                            ui.separator();
+                        }
+
+                        match action {
+                            Some(MessageAction::Copy(i)) if i < self.messages.len() => {
+                                self.copy_to_clipboard(&self.messages[i].content);
+                            }
+                            Some(MessageAction::StartEdit(i)) if i < self.messages.len() => {
+                                self.edit_buffer = self.messages[i].content.clone();
+                                self.editing_message = Some(i);
+                            }
+                            Some(MessageAction::FinishEdit(i)) => {
+                                self.edit_and_resend(i);
+                            }
+                            Some(MessageAction::CancelEdit) => {
+                                self.editing_message = None;
+                                self.edit_buffer.clear();
+                            }
+                            Some(MessageAction::Regenerate) => {
+                                self.regenerate();
+                            }
+                            _ => {}
+                        }
                     });
-                    return;
-                }
-
-                let mut action: Option<MessageAction> = None;
-                let msg_count = self.messages.len();
-
-                for (i, msg) in self.messages.iter().enumerate() {
-                    let (prefix, color) = match msg.role {
-                        Role::User => ("You", egui::Color32::from_rgb(100, 180, 255)),
-                        Role::Assistant => ("AI", egui::Color32::from_rgb(100, 255, 150)),
-                        Role::System => ("System", egui::Color32::GRAY),
-                    };
-
-                    ui.horizontal(|ui| {
-                        ui.colored_label(color, format!("{prefix}:"));
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            if ui.small_button("📋").on_hover_text("Copy").clicked() {
-                                action = Some(MessageAction::Copy(i));
-                            }
-                            if msg.role == Role::User && !self.streaming
-                                && ui.small_button("✏").on_hover_text("Edit").clicked() {
-                                    action = Some(MessageAction::StartEdit(i));
-                                }
-                            if msg.role == Role::Assistant
-                                && i == msg_count - 1
-                                && !self.streaming
-                                && ui.small_button("🔄").on_hover_text("Regenerate").clicked() {
-                                    action = Some(MessageAction::Regenerate);
-                                }
-                        });
-                    });
-
-                    if self.editing_message == Some(i) {
-                        ui.add(
-                            egui::TextEdit::multiline(&mut self.edit_buffer)
-                                .desired_width(f32::INFINITY)
-                                .desired_rows(3),
-                        );
-                        ui.horizontal(|ui| {
-                            if ui.button("Send").clicked() {
-                                action = Some(MessageAction::FinishEdit(i));
-                            }
-                            if ui.button("Cancel").clicked() {
-                                action = Some(MessageAction::CancelEdit);
-                            }
-                        });
-                    } else if msg.role == Role::Assistant && !msg.content.is_empty() {
-                        CommonMarkViewer::new().show(
-                            ui,
-                            &mut self.commonmark_cache,
-                            &msg.content,
-                        );
-                    } else {
-                        ui.label(&msg.content);
-                    }
-
-                    ui.add_space(8.0);
-                    ui.separator();
-                }
-
-                match action {
-                    Some(MessageAction::Copy(i)) if i < self.messages.len() => {
-                        self.copy_to_clipboard(&self.messages[i].content);
-                    }
-                    Some(MessageAction::StartEdit(i)) if i < self.messages.len() => {
-                        self.edit_buffer = self.messages[i].content.clone();
-                        self.editing_message = Some(i);
-                    }
-                    Some(MessageAction::FinishEdit(i)) => {
-                        self.edit_and_resend(i);
-                    }
-                    Some(MessageAction::CancelEdit) => {
-                        self.editing_message = None;
-                        self.edit_buffer.clear();
-                    }
-                    Some(MessageAction::Regenerate) => {
-                        self.regenerate();
-                    }
-                    _ => {}
-                }
             });
-        });
     }
 }
 

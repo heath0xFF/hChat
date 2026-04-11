@@ -144,13 +144,12 @@ pub fn stream_chat(
             max_tokens,
             api_key,
         } = params;
-        let client = match Client::builder()
-            .connect_timeout(CONNECT_TIMEOUT)
-            .build()
-        {
+        let client = match Client::builder().connect_timeout(CONNECT_TIMEOUT).build() {
             Ok(c) => c,
             Err(e) => {
-                let _ = tx.send(StreamEvent::Error(format!("Failed to create HTTP client: {e}")));
+                let _ = tx.send(StreamEvent::Error(format!(
+                    "Failed to create HTTP client: {e}"
+                )));
                 return;
             }
         };

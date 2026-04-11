@@ -19,10 +19,7 @@ impl Storage {
             #[cfg(unix)]
             {
                 use std::os::unix::fs::PermissionsExt;
-                let _ = std::fs::set_permissions(
-                    parent,
-                    std::fs::Permissions::from_mode(0o700),
-                );
+                let _ = std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700));
             }
         }
         let conn = Connection::open(&path).expect("Failed to open database");
@@ -104,10 +101,11 @@ impl Storage {
     pub fn delete_conversation(&self, id: i64) {
         // Use a transaction so both deletes succeed or both fail
         if let Ok(tx) = self.conn.unchecked_transaction() {
-            let r1 =
-                tx.execute("DELETE FROM messages WHERE conversation_id = ?1", params![id]);
-            let r2 =
-                tx.execute("DELETE FROM conversations WHERE id = ?1", params![id]);
+            let r1 = tx.execute(
+                "DELETE FROM messages WHERE conversation_id = ?1",
+                params![id],
+            );
+            let r2 = tx.execute("DELETE FROM conversations WHERE id = ?1", params![id]);
 
             if r1.is_ok() && r2.is_ok() {
                 tx.commit().ok();
@@ -157,19 +155,18 @@ impl Storage {
         }
 
         tx.execute(
-                "UPDATE conversations SET updated_at = datetime('now') WHERE id = ?1",
-                params![conversation_id],
-            )
-            .ok();
+            "UPDATE conversations SET updated_at = datetime('now') WHERE id = ?1",
+            params![conversation_id],
+        )
+        .ok();
 
         tx.commit().ok();
     }
 
     pub fn load_messages(&self, conversation_id: i64) -> Vec<Message> {
-        let mut stmt = match self
-            .conn
-            .prepare("SELECT role, content FROM messages WHERE conversation_id = ?1 ORDER BY position")
-        {
+        let mut stmt = match self.conn.prepare(
+            "SELECT role, content FROM messages WHERE conversation_id = ?1 ORDER BY position",
+        ) {
             Ok(s) => s,
             Err(_) => return Vec::new(),
         };
@@ -193,7 +190,10 @@ impl Storage {
 
     pub fn search(&self, query: &str) -> Vec<(i64, String, String)> {
         // Escape LIKE special characters
-        let escaped = query.replace('\\', "\\\\").replace('%', "\\%").replace('_', "\\_");
+        let escaped = query
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_");
         let pattern = format!("%{escaped}%");
         let mut stmt = match self.conn.prepare(
             "SELECT c.id, c.title, m.content FROM messages m
