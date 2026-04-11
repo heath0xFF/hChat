@@ -35,6 +35,7 @@ pub struct ChatApp {
     current_conversation_id: Option<i64>,
     conversation_list: Vec<(i64, String)>,
     show_sidebar: bool,
+    show_context_sidebar: bool,
     // Search
     search_query: String,
     search_results: Vec<(i64, String, String)>,
@@ -57,7 +58,7 @@ impl ChatApp {
     pub fn new(cc: &eframe::CreationContext<'_>, config: Config) -> Self {
         configure_fonts(&cc.egui_ctx, &config);
         apply_theme(&cc.egui_ctx, config.dark_mode);
-        cc.egui_ctx.set_pixels_per_point(config.ui_scale);
+        cc.egui_ctx.set_zoom_factor(config.ui_scale);
 
         let runtime = tokio::runtime::Runtime::new().expect("Failed to create tokio runtime");
         let storage = Storage::new();
@@ -93,6 +94,7 @@ impl ChatApp {
             current_conversation_id: None,
             conversation_list,
             show_sidebar: true,
+            show_context_sidebar: true,
             search_query: String::new(),
             search_results: Vec::new(),
             show_search: false,
@@ -455,7 +457,7 @@ impl ChatApp {
 
         // Update UI scale
         if (self.config.ui_scale - new_config.ui_scale).abs() > f32::EPSILON {
-            ctx.set_pixels_per_point(new_config.ui_scale);
+            ctx.set_zoom_factor(new_config.ui_scale);
         }
 
         // Apply new settings
@@ -652,6 +654,15 @@ impl eframe::App for ChatApp {
                 }
 
                 ui.separator();
+                
+                let context_sidebar_icon = if self.show_context_sidebar { "☰▶" } else { "☰◀" };
+                if ui
+                    .button(context_sidebar_icon)
+                    .on_hover_text("Toggle Context Sidebar")
+                    .clicked()
+                {
+                    self.show_context_sidebar = !self.show_context_sidebar;
+                }
 
                 let settings_label = if self.show_settings { "⚙ ▼" } else { "⚙" };
                 if ui
@@ -806,7 +817,7 @@ impl eframe::App for ChatApp {
                         .add(egui::Slider::new(&mut self.config.ui_scale, 0.75..=2.0).step_by(0.05))
                         .changed()
                     {
-                        ctx.set_pixels_per_point(self.config.ui_scale);
+                        ctx.set_zoom_factor(self.config.ui_scale);
                     }
                 });
                 if fonts_changed {
@@ -839,7 +850,7 @@ impl eframe::App for ChatApp {
                         self.use_max_tokens = self.config.use_max_tokens;
                         self.saved_endpoints = self.config.saved_endpoints.clone();
                         configure_fonts(&ctx, &self.config);
-                        ctx.set_pixels_per_point(self.config.ui_scale);
+                        ctx.set_zoom_factor(self.config.ui_scale);
                         apply_theme(&ctx, self.config.dark_mode);
                         if let Err(e) = self.config.save() {
                             self.error = Some(format!("Failed to save settings: {e}"));
@@ -1095,6 +1106,79 @@ impl eframe::App for ChatApp {
                             None => {}
                         }
                     });
+                });
+        }
+
+        if self.show_context_sidebar {
+            egui::Panel::right("context_sidebar")
+                .default_size(250.0)
+                .show_inside(ui, |ui| {
+                    ui.heading("Context & Stats");
+                    ui.separator();
+                    ui.add_space(8.0);
+
+                    // Estimate tokens based on current conversation messages
+                    // A very rough rule of thumb is ~4 characters per token
+                    let mut char_count = 0;
+                    for msg in &self.messages {
+                        char_count += msg.content.len();
+                    }
+                    if !self.system_prompt.is_empty() {
+                        char_count += self.system_prompt.len();
+                    }
+                    char_count += self.input.len();
+
+                    // For accurate tokens, we could use tiktoken-rs if we know the model,
+                    // but for local LLMs, a rough estimate is okay, or we can use tiktoken to guess
+                    let approx_tokens = {
+                        let mut full_text = self.system_prompt.clone();
+                        full_text.push('\n');
+                        for m in &self.messages {
+                            full_text.push_str(&m.content);
+                            full_text.push('\n');
+                        }
+                        full_text.push_str(&self.input);
+
+                        let bpe = tiktoken_rs::cl100k_base_singleton();
+                        bpe.encode_with_special_tokens(&full_text).len()
+                    };
+
+                    ui.label(egui::RichText::new("Context Size").strong());
+                    ui.label(format!("{} Characters", char_count));
+                    ui.label(format!("~{} Tokens", approx_tokens));
+                    ui.add_space(8.0);
+
+                    ui.label(egui::RichText::new("Cost Estimate").strong());
+                    
+                    // Simple heuristic to guess if the endpoint is paid vs local
+                    let is_paid_endpoint = self.base_url.contains("openrouter.ai") || self.base_url.contains("api.openai.com") || self.base_url.contains("api.anthropic.com");
+                    
+                    if is_paid_endpoint {
+                        // We could use an exact mapping, but for now we'll estimate generic cost
+                        // based on $0.01 per 1k context tokens
+                        let estimated_cost = (approx_tokens as f64 / 1000.0) * 0.01;
+                        ui.label(format!("~${:.4} (context)", estimated_cost));
+                    } else {
+                        ui.label("Local models: $0.00");
+                    }
+                    ui.add_space(8.0);
+
+                    if let Some(usage) = &self.last_usage {
+                        ui.separator();
+                        ui.label(egui::RichText::new("Last API Response").strong());
+                        if let Some(p) = usage.prompt_tokens {
+                            ui.label(format!("Prompt: {}", p));
+                        }
+                        if let Some(c) = usage.completion_tokens {
+                            ui.label(format!("Completion: {}", c));
+                        }
+                        if let Some(t) = usage.total_tokens {
+                            ui.label(format!("Total: {}", t));
+                        }
+                        if let Some(cost) = usage.total_cost {
+                            ui.label(format!("Cost: ${:.4}", cost));
+                        }
+                    }
                 });
         }
 

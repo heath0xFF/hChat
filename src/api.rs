@@ -44,6 +44,9 @@ struct ChatRequest {
 struct ChatChunk {
     choices: Option<Vec<ChunkChoice>>,
     usage: Option<Usage>,
+    // OpenRouter optionally returns this at the root of the chunk
+    // or sometimes within the chunk (we'll try to capture if it's top-level)
+    cost: Option<f64>,
 }
 
 #[derive(Deserialize, Clone)]
@@ -51,6 +54,7 @@ pub struct Usage {
     pub prompt_tokens: Option<u32>,
     pub completion_tokens: Option<u32>,
     pub total_tokens: Option<u32>,
+    pub total_cost: Option<f64>,
 }
 
 #[derive(Deserialize)]
@@ -299,7 +303,10 @@ pub fn stream_chat(
                                         }
                                 }
                             }
-                            if let Some(usage) = chunk.usage {
+                            if let Some(mut usage) = chunk.usage {
+                                if let Some(cost) = chunk.cost {
+                                    usage.total_cost = Some(cost);
+                                }
                                 let _ = tx.send(StreamEvent::UsageInfo(usage));
                             }
                         }
