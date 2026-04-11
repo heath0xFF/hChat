@@ -1,0 +1,1 @@
+well i think my thing is that i want to be able to run `brew update` or whatever the command is to pull these updates down, and the way it's organized right now is that the updates are only made available to the homebrew tap via a github action that only runs when a new release is pushed
