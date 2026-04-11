@@ -47,6 +47,7 @@ pub struct ChatApp {
     new_endpoint_key: String,
     // Token usage
     last_usage: Option<Usage>,
+    session_cost: f64,
     // Rename
     renaming_conversation: Option<i64>,
     rename_buffer: String,
@@ -103,6 +104,7 @@ impl ChatApp {
             new_endpoint: String::new(),
             new_endpoint_key: String::new(),
             last_usage: None,
+            session_cost: 0.0,
             renaming_conversation: None,
             rename_buffer: String::new(),
             config,
@@ -159,6 +161,7 @@ impl ChatApp {
         self.current_conversation_id = None;
         self.error = None;
         self.last_usage = None;
+        self.session_cost = 0.0;
     }
 
     fn save_current(&mut self) {
@@ -210,6 +213,7 @@ impl ChatApp {
         self.current_conversation_id = Some(id);
         self.error = None;
         self.last_usage = None;
+        self.session_cost = 0.0;
         self.editing_message = None;
         self.edit_buffer.clear();
     }
@@ -399,6 +403,9 @@ impl ChatApp {
                         }
                     }
                     StreamEvent::UsageInfo(usage) => {
+                        if let Some(cost) = usage.cost {
+                            self.session_cost += cost;
+                        }
                         self.last_usage = Some(usage);
                     }
                     StreamEvent::Done => {
@@ -1148,24 +1155,17 @@ impl eframe::App for ChatApp {
                     ui.label(format!("~{} Tokens", approx_tokens));
                     ui.add_space(8.0);
 
-                    ui.label(egui::RichText::new("Cost Estimate").strong());
-                    
-                    // Simple heuristic to guess if the endpoint is paid vs local
-                    let is_paid_endpoint = self.base_url.contains("openrouter.ai") || self.base_url.contains("api.openai.com") || self.base_url.contains("api.anthropic.com");
-                    
-                    if is_paid_endpoint {
-                        // We could use an exact mapping, but for now we'll estimate generic cost
-                        // based on $0.01 per 1k context tokens
-                        let estimated_cost = (approx_tokens as f64 / 1000.0) * 0.01;
-                        ui.label(format!("~${:.4} (context)", estimated_cost));
+                    ui.label(egui::RichText::new("Chat Spend").strong());
+                    if self.session_cost > 0.0 {
+                        ui.label(format!("${:.6}", self.session_cost));
                     } else {
-                        ui.label("Local models: $0.00");
+                        ui.label("$0.00");
                     }
                     ui.add_space(8.0);
 
                     if let Some(usage) = &self.last_usage {
                         ui.separator();
-                        ui.label(egui::RichText::new("Last API Response").strong());
+                        ui.label(egui::RichText::new("Last Request").strong());
                         if let Some(p) = usage.prompt_tokens {
                             ui.label(format!("Prompt: {}", p));
                         }
@@ -1175,8 +1175,8 @@ impl eframe::App for ChatApp {
                         if let Some(t) = usage.total_tokens {
                             ui.label(format!("Total: {}", t));
                         }
-                        if let Some(cost) = usage.total_cost {
-                            ui.label(format!("Cost: ${:.4}", cost));
+                        if let Some(cost) = usage.cost {
+                            ui.label(format!("Cost: ${:.6}", cost));
                         }
                     }
                 });
