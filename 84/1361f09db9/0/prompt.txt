@@ -32,3 +32,7 @@ continue
 ---
 
 clean up the unnecessary files you've created
+
+---
+
+ok can you commit and push these updates. and i think with this feature it's probably time for a new version release. 0.4.0

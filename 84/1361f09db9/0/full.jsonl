@@ -13,7 +13,7 @@
     },
     "time": {
       "created": 1775925373671,
-      "updated": 1775928405845
+      "updated": 1775928425894
     }
   },
   "messages": [
@@ -17245,21 +17245,24 @@
           "cwd": "/Users/heath/code/hChat",
           "root": "/Users/heath/code/hChat"
         },
-        "cost": 0,
+        "cost": 0.007304,
         "tokens": {
-          "input": 0,
-          "output": 0,
+          "total": 54866,
+          "input": 3376,
+          "output": 46,
           "reasoning": 0,
           "cache": {
-            "read": 0,
-            "write": 0
+            "write": 0,
+            "read": 51444
           }
         },
         "modelID": "google/gemini-3.1-pro-preview",
         "providerID": "openrouter",
         "time": {
-          "created": 1775928405798
+          "created": 1775928405798,
+          "completed": 1775928412852
         },
+        "finish": "tool-calls",
         "id": "msg_d7d94ef26001ERLTZsGhoVC8LQ",
         "sessionID": "ses_282995518ffetEUivdf3qs4Pnd"
       },
@@ -17276,17 +17279,22 @@
           "tool": "bash",
           "callID": "tool_bash_ong9ldGq1uMUsc5UieqR",
           "state": {
-            "metadata": {
-              "output": "",
-              "description": "Commit changes"
-            },
-            "status": "running",
+            "status": "completed",
             "input": {
               "command": "git add Cargo.toml Cargo.lock src/api.rs src/app.rs && git commit -m \"feat: add context sidebar and fix retina display scaling on launch\"",
               "description": "Commit changes"
             },
+            "output": "[main c464fe2] feat: add context sidebar and fix retina display scaling on launch\n 4 files changed, 195 insertions(+), 12 deletions(-)\n",
+            "metadata": {
+              "output": "[main c464fe2] feat: add context sidebar and fix retina display scaling on launch\n 4 files changed, 195 insertions(+), 12 deletions(-)\n",
+              "exit": 0,
+              "description": "Commit changes",
+              "truncated": false
+            },
+            "title": "Commit changes",
             "time": {
-              "start": 1775928409629
+              "start": 1775928409627,
+              "end": 1775928412770
             }
           },
           "metadata": {
@@ -17305,6 +17313,420 @@
           "id": "prt_d7d94fe19001ty35OA5V6GU1VP",
           "sessionID": "ses_282995518ffetEUivdf3qs4Pnd",
           "messageID": "msg_d7d94ef26001ERLTZsGhoVC8LQ"
+        },
+        {
+          "reason": "tool-calls",
+          "snapshot": "96905adcf4e9f98a8d6bd08fee4e5ab8698667a4",
+          "type": "step-finish",
+          "tokens": {
+            "total": 54866,
+            "input": 3376,
+            "output": 46,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 51444
+            }
+          },
+          "cost": 0.007304,
+          "id": "prt_d7d950a62002icswLtUiU4TcyT",
+          "sessionID": "ses_282995518ffetEUivdf3qs4Pnd",
+          "messageID": "msg_d7d94ef26001ERLTZsGhoVC8LQ"
+        }
+      ]
+    },
+    {
+      "info": {
+        "parentID": "msg_d7d93daba001W1ip6bJgZp1C37",
+        "role": "assistant",
+        "mode": "build",
+        "agent": "build",
+        "variant": "high",
+        "path": {
+          "cwd": "/Users/heath/code/hChat",
+          "root": "/Users/heath/code/hChat"
+        },
+        "cost": 0.007098,
+        "tokens": {
+          "total": 54915,
+          "input": 3477,
+          "output": 12,
+          "reasoning": 0,
+          "cache": {
+            "write": 0,
+            "read": 51426
+          }
+        },
+        "modelID": "google/gemini-3.1-pro-preview",
+        "providerID": "openrouter",
+        "time": {
+          "created": 1775928412857,
+          "completed": 1775928418012
+        },
+        "finish": "tool-calls",
+        "id": "msg_d7d950ab9001BAjPyHRWuwGVme",
+        "sessionID": "ses_282995518ffetEUivdf3qs4Pnd"
+      },
+      "parts": [
+        {
+          "snapshot": "96905adcf4e9f98a8d6bd08fee4e5ab8698667a4",
+          "type": "step-start",
+          "id": "prt_d7d951612001fUnOH369HBQZ9C",
+          "sessionID": "ses_282995518ffetEUivdf3qs4Pnd",
+          "messageID": "msg_d7d950ab9001BAjPyHRWuwGVme"
+        },
+        {
+          "type": "tool",
+          "tool": "bash",
+          "callID": "tool_bash_u591d4SL96Dnt3VEojwh",
+          "state": {
+            "status": "completed",
+            "input": {
+              "command": "git push",
+              "description": "Push to remote"
+            },
+            "output": "[entire] Pushing entire/checkpoints/v1 to origin.... done\nTo github.com:heath0xFF/hChat.git\n   13f0c9c..c464fe2  main -> main\n",
+            "metadata": {
+              "output": "[entire] Pushing entire/checkpoints/v1 to origin.... done\nTo github.com:heath0xFF/hChat.git\n   13f0c9c..c464fe2  main -> main\n",
+              "exit": 0,
+              "description": "Push to remote",
+              "truncated": false
+            },
+            "title": "Push to remote",
+            "time": {
+              "start": 1775928415766,
+              "end": 1775928417915
+            }
+          },
+          "metadata": {
+            "openrouter": {
+              "reasoning_details": [
+                {
+                  "type": "reasoning.encrypted",
+                  "data": "ZTI0ODMwYTctNWNkNi00MmZlLTk5OGItZWU1MzllNzJiOWMz",
+                  "id": "tool_bash_u591d4SL96Dnt3VEojwh",
+                  "format": "google-gemini-v1",
+                  "index": 0
+                }
+              ]
+            }
+          },
+          "id": "prt_d7d951615001H28hHh4NHJSgzn",
+          "sessionID": "ses_282995518ffetEUivdf3qs4Pnd",
+          "messageID": "msg_d7d950ab9001BAjPyHRWuwGVme"
+        },
+        {
+          "reason": "tool-calls",
+          "snapshot": "96905adcf4e9f98a8d6bd08fee4e5ab8698667a4",
+          "type": "step-finish",
+          "tokens": {
+            "total": 54915,
+            "input": 3477,
+            "output": 12,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 51426
+            }
+          },
+          "cost": 0.007098,
+          "id": "prt_d7d951e7d001iD2uiAC6ObC88W",
+          "sessionID": "ses_282995518ffetEUivdf3qs4Pnd",
+          "messageID": "msg_d7d950ab9001BAjPyHRWuwGVme"
+        }
+      ]
+    },
+    {
+      "info": {
+        "parentID": "msg_d7d93daba001W1ip6bJgZp1C37",
+        "role": "assistant",
+        "mode": "build",
+        "agent": "build",
+        "variant": "high",
+        "path": {
+          "cwd": "/Users/heath/code/hChat",
+          "root": "/Users/heath/code/hChat"
+        },
+        "cost": 0.009584,
+        "tokens": {
+          "total": 55169,
+          "input": 3556,
+          "output": 206,
+          "reasoning": 0,
+          "cache": {
+            "write": 0,
+            "read": 51407
+          }
+        },
+        "modelID": "google/gemini-3.1-pro-preview",
+        "providerID": "openrouter",
+        "time": {
+          "created": 1775928418016,
+          "completed": 1775928422900
+        },
+        "finish": "tool-calls",
+        "id": "msg_d7d951ee0001PsYTNSIG57dCly",
+        "sessionID": "ses_282995518ffetEUivdf3qs4Pnd"
+      },
+      "parts": [
+        {
+          "snapshot": "96905adcf4e9f98a8d6bd08fee4e5ab8698667a4",
+          "type": "step-start",
+          "id": "prt_d7d952e6b001b1MwDxJo1WrZqF",
+          "sessionID": "ses_282995518ffetEUivdf3qs4Pnd",
+          "messageID": "msg_d7d951ee0001PsYTNSIG57dCly"
+        },
+        {
+          "type": "tool",
+          "tool": "bash",
+          "callID": "tool_bash_jVXSYZqioZzRFeGOd6CY",
+          "state": {
+            "status": "completed",
+            "input": {
+              "command": "cat << 'EOF' > release_notes.md\n## What's new in v0.4.0\n- **Feature: Context Sidebar**: Added a new right-hand toggleable context sidebar which gives you a real-time estimate of your context character length and an exact token calculation based on the `cl100k_base` model encoder.\n- **Feature: Cost Estimator & Tracker**: Automatically estimates token cost for paid endpoints (like OpenRouter, OpenAI, and Anthropic). Captures exact completion cost payloads directly from providers when the message is successfully generated.\n- **Fix**: Solved a bug when hChat is run with macOS tiling window managers (like Aerospace) where the application scaling was rendered extremely small due to overridden DPI mappings; it now correctly uses native Retina zoom factors.\nEOF\ngh release create v0.4.0 --title \"v0.4.0\" --notes-file release_notes.md",
+              "description": "Create release"
+            },
+            "output": "https://github.com/heath0xFF/hChat/releases/tag/v0.4.0\n",
+            "metadata": {
+              "output": "https://github.com/heath0xFF/hChat/releases/tag/v0.4.0\n",
+              "exit": 0,
+              "description": "Create release",
+              "truncated": false
+            },
+            "title": "Create release",
+            "time": {
+              "start": 1775928422000,
+              "end": 1775928422776
+            }
+          },
+          "metadata": {
+            "openrouter": {
+              "reasoning_details": [
+                {
+                  "type": "reasoning.encrypted",
+                  "data": "ZTI0ODMwYTctNWNkNi00MmZlLTk5OGItZWU1MzllNzJiOWMz",
+                  "id": "tool_bash_jVXSYZqioZzRFeGOd6CY",
+                  "format": "google-gemini-v1",
+                  "index": 0
+                }
+              ]
+            }
+          },
+          "id": "prt_d7d952e6d001SMmfDlPSbBUrZA",
+          "sessionID": "ses_282995518ffetEUivdf3qs4Pnd",
+          "messageID": "msg_d7d951ee0001PsYTNSIG57dCly"
+        },
+        {
+          "reason": "tool-calls",
+          "snapshot": "b9c7d1689551e0221ebfaf750ddc9391bb91a585",
+          "type": "step-finish",
+          "tokens": {
+            "total": 55169,
+            "input": 3556,
+            "output": 206,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 51407
+            }
+          },
+          "cost": 0.009584,
+          "id": "prt_d7d953179001Dy2WREBDr2LASJ",
+          "sessionID": "ses_282995518ffetEUivdf3qs4Pnd",
+          "messageID": "msg_d7d951ee0001PsYTNSIG57dCly"
+        },
+        {
+          "type": "patch",
+          "hash": "96905adcf4e9f98a8d6bd08fee4e5ab8698667a4",
+          "files": [
+            "/Users/heath/code/hChat/release_notes.md"
+          ],
+          "id": "prt_d7d9531ef001I5Bfn2Rlk37PMi",
+          "sessionID": "ses_282995518ffetEUivdf3qs4Pnd",
+          "messageID": "msg_d7d951ee0001PsYTNSIG57dCly"
+        }
+      ]
+    },
+    {
+      "info": {
+        "parentID": "msg_d7d93daba001W1ip6bJgZp1C37",
+        "role": "assistant",
+        "mode": "build",
+        "agent": "build",
+        "variant": "high",
+        "path": {
+          "cwd": "/Users/heath/code/hChat",
+          "root": "/Users/heath/code/hChat"
+        },
+        "cost": 0.007764,
+        "tokens": {
+          "total": 55206,
+          "input": 3786,
+          "output": 16,
+          "reasoning": 0,
+          "cache": {
+            "write": 0,
+            "read": 51404
+          }
+        },
+        "modelID": "google/gemini-3.1-pro-preview",
+        "providerID": "openrouter",
+        "time": {
+          "created": 1775928422904,
+          "completed": 1775928425846
+        },
+        "finish": "tool-calls",
+        "id": "msg_d7d9531f8001tWXknhcPw12pbS",
+        "sessionID": "ses_282995518ffetEUivdf3qs4Pnd"
+      },
+      "parts": [
+        {
+          "snapshot": "b9c7d1689551e0221ebfaf750ddc9391bb91a585",
+          "type": "step-start",
+          "id": "prt_d7d953cea001e2M3y8BCJhOlM9",
+          "sessionID": "ses_282995518ffetEUivdf3qs4Pnd",
+          "messageID": "msg_d7d9531f8001tWXknhcPw12pbS"
+        },
+        {
+          "type": "tool",
+          "tool": "bash",
+          "callID": "tool_bash_tEdFlulmj02KwSmW3mwq",
+          "state": {
+            "status": "completed",
+            "input": {
+              "command": "rm release_notes.md",
+              "description": "Remove temporary file"
+            },
+            "output": "",
+            "metadata": {
+              "output": "",
+              "exit": 0,
+              "description": "Remove temporary file",
+              "truncated": false
+            },
+            "title": "Remove temporary file",
+            "time": {
+              "start": 1775928425710,
+              "end": 1775928425727
+            }
+          },
+          "metadata": {
+            "openrouter": {
+              "reasoning_details": [
+                {
+                  "type": "reasoning.encrypted",
+                  "data": "ZTI0ODMwYTctNWNkNi00MmZlLTk5OGItZWU1MzllNzJiOWMz",
+                  "id": "tool_bash_tEdFlulmj02KwSmW3mwq",
+                  "format": "google-gemini-v1",
+                  "index": 0
+                }
+              ]
+            }
+          },
+          "id": "prt_d7d953cec001NuGxu2hezhQAq4",
+          "sessionID": "ses_282995518ffetEUivdf3qs4Pnd",
+          "messageID": "msg_d7d9531f8001tWXknhcPw12pbS"
+        },
+        {
+          "reason": "tool-calls",
+          "snapshot": "96905adcf4e9f98a8d6bd08fee4e5ab8698667a4",
+          "type": "step-finish",
+          "tokens": {
+            "total": 55206,
+            "input": 3786,
+            "output": 16,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 51404
+            }
+          },
+          "cost": 0.007764,
+          "id": "prt_d7d953d000013fStCoH9p10Nt1",
+          "sessionID": "ses_282995518ffetEUivdf3qs4Pnd",
+          "messageID": "msg_d7d9531f8001tWXknhcPw12pbS"
+        },
+        {
+          "type": "patch",
+          "hash": "b9c7d1689551e0221ebfaf750ddc9391bb91a585",
+          "files": [
+            "/Users/heath/code/hChat/release_notes.md"
+          ],
+          "id": "prt_d7d953d6f001XwfVWY3b7gRlus",
+          "sessionID": "ses_282995518ffetEUivdf3qs4Pnd",
+          "messageID": "msg_d7d9531f8001tWXknhcPw12pbS"
+        }
+      ]
+    },
+    {
+      "info": {
+        "parentID": "msg_d7d93daba001W1ip6bJgZp1C37",
+        "role": "assistant",
+        "mode": "build",
+        "agent": "build",
+        "variant": "high",
+        "path": {
+          "cwd": "/Users/heath/code/hChat",
+          "root": "/Users/heath/code/hChat"
+        },
+        "cost": 0.00964,
+        "tokens": {
+          "total": 55370,
+          "input": 3824,
+          "output": 166,
+          "reasoning": 0,
+          "cache": {
+            "write": 0,
+            "read": 51380
+          }
+        },
+        "modelID": "google/gemini-3.1-pro-preview",
+        "providerID": "openrouter",
+        "time": {
+          "created": 1775928425851,
+          "completed": 1775928429758
+        },
+        "finish": "stop",
+        "id": "msg_d7d953d7b001vhk8kkquuHCsk9",
+        "sessionID": "ses_282995518ffetEUivdf3qs4Pnd"
+      },
+      "parts": [
+        {
+          "snapshot": "96905adcf4e9f98a8d6bd08fee4e5ab8698667a4",
+          "type": "step-start",
+          "id": "prt_d7d95490d001jLl5DqkYikLp6R",
+          "sessionID": "ses_282995518ffetEUivdf3qs4Pnd",
+          "messageID": "msg_d7d953d7b001vhk8kkquuHCsk9"
+        },
+        {
+          "type": "text",
+          "text": "All done! \n\nI have:\n1. Bumped the version in `Cargo.toml` to `0.4.0` and updated `Cargo.lock` accordingly.\n2. Committed the changes with the message `feat: add context sidebar and fix retina display scaling on launch`.\n3. Pushed the commit directly to the `main` branch of your remote repository.\n4. Created a new GitHub release for `v0.4.0` detailing the bug fix and the new token tracking sidebar.\n\nYou can check out the release here: [https://github.com/heath0xFF/hChat/releases/tag/v0.4.0](https://github.com/heath0xFF/hChat/releases/tag/v0.4.0)",
+          "time": {
+            "start": 1775928429675,
+            "end": 1775928429675
+          },
+          "id": "prt_d7d95490f001a1KXBxUkSAE56r",
+          "sessionID": "ses_282995518ffetEUivdf3qs4Pnd",
+          "messageID": "msg_d7d953d7b001vhk8kkquuHCsk9"
+        },
+        {
+          "reason": "stop",
+          "snapshot": "96905adcf4e9f98a8d6bd08fee4e5ab8698667a4",
+          "type": "step-finish",
+          "tokens": {
+            "total": 55370,
+            "input": 3824,
+            "output": 166,
+            "reasoning": 0,
+            "cache": {
+              "write": 0,
+              "read": 51380
+            }
+          },
+          "cost": 0.00964,
+          "id": "prt_d7d954c6c001430TYoKhkW17e9",
+          "sessionID": "ses_282995518ffetEUivdf3qs4Pnd",
+          "messageID": "msg_d7d953d7b001vhk8kkquuHCsk9"
         }
       ]
     }
