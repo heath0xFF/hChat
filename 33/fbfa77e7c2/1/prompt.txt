@@ -1,0 +1,12 @@
+You are a code reviewer focused on **performance, concurrency safety, and resource management** in a Rust/egui desktop application. Review the uncommitted changes.
+
+Read the full current versions of `src/app.rs`, `src/api.rs`, and `src/storage.rs`.
+
+Focus on:
+
+1. The new `reload_config()` method in `app.rs` — does calling `configure_fonts()`, `apply_theme()`, and `fetch_models()` mid-frame cause any issues with egui's immediate mode rendering? Could it trigger double repaints or layout glitches?
+2. `fetch_models()` is called potentially every time `reload_config()` runs (even when nothing changed). Any risk of stacking concurrent model-fetch tasks on the tokio runtime? Is there cleanup of old receivers?
+3. Are there any potential issues with the `ctx.clone()` being passed to `reload_config` from within `eframe::App::update`? Any lifetime or borrow-checker concerns?
+4. Any other performance regressions from the formatting changes (e.g., increased allocations, unnecessary clones).
+
+Provide a concise summary with file:line references.
