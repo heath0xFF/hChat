@@ -33,6 +33,12 @@ brew tap heath0xFF/tap
 brew install hchat
 ```
 
+To update to the latest release:
+
+```bash
+brew update && brew upgrade hchat
+```
+
 ### macOS (manual)
 
 ```bash
