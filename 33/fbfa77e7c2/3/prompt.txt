@@ -1,0 +1,13 @@
+i'd like a few review agents to be spun up and review the updates that just got written
+
+---
+
+fix the high and medium priority issues you outlined. delete the temp_app.txt file. and fix formatting.
+
+---
+
+ok last thing -- i'd like for you to review agents.md and tell me what you think
+
+---
+
+yeah i'm with you on that -- go ahead and update agents.md with information about points 2 and 4

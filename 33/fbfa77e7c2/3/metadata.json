@@ -1,0 +1,42 @@
+{
+  "cli_version": "0.5.3",
+  "checkpoint_id": "33fbfa77e7c2",
+  "session_id": "ses_282eb4a02ffe6aw0J6HCVROs7z",
+  "strategy": "manual-commit",
+  "created_at": "2026-04-11T15:22:55.332185Z",
+  "branch": "main",
+  "checkpoints_count": 4,
+  "files_touched": [
+    "AGENTS.md",
+    "Cargo.lock",
+    "src/api.rs",
+    "src/app.rs",
+    "src/config.rs",
+    "src/storage.rs"
+  ],
+  "agent": "OpenCode",
+  "model": "anthropic/claude-opus-4.6",
+  "turn_id": "509e4e0a5856",
+  "token_usage": {
+    "input_tokens": 342561,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 1197927,
+    "output_tokens": 10007,
+    "api_call_count": 34
+  },
+  "session_metrics": {
+    "turn_count": 4
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-04-11T15:22:55.017162Z",
+    "agent_lines": 422,
+    "agent_removed": 308,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 422,
+    "total_lines_changed": 730,
+    "agent_percentage": 100,
+    "metric_version": 2
+  }
+}
