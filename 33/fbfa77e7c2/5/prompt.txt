@@ -1,0 +1,38 @@
+what happens when someone, in their config, has say the default endpoint but also has one or more [[saved.endpoints]]?
+
+---
+
+# --- Endpoints & Connections ---
+
+# default_endpoint: The URL of the endpoint to use by default on application launch.
+# This URL must exactly match one of the URLs in your `saved_endpoints` list below.
+# Default: "http://localhost:11434/v1"
+default_endpoint = "http://localhost:11434/v1"
+
+# saved_endpoints: A list of AI providers and models you want to connect to.
+# Each endpoint requires a `url` and optionally an `api_key`.
+# If `api_key` is omitted, no Authorization header will be sent (perfect for local instances like Ollama).
+
+# Local Ollama (No API key needed)
+[[saved_endpoints]]
+url = "http://localhost:11434/v1"
+
+# Example: OpenRouter (Requires API key from https://openrouter.ai/keys)
+[[saved_endpoints]]
+url = "https://openrouter.ai/api/v1"
+api_key = "sk-or-v1-your-key-here"
+
+# Example: LM Studio (Usually runs locally, no API key needed)
+# [[saved_endpoints]]
+# url = "http://localhost:1234/v1"
+
+# Example: OpenAI or other compatible APIs
+# [[saved_endpoints]]
+# url = "https://api.example.com/v1"
+# api_key = "your-key-here" 
+
+so i'm referring to this scenario. when i have two endpoints active. one for localhost ollama and one for openrouter.
+
+---
+
+ok nice i like that. i'm going to test it real quick. -- tell me how the app picks the model for openrouter?

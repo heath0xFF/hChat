@@ -3,7 +3,7 @@
   "checkpoint_id": "33fbfa77e7c2",
   "strategy": "manual-commit",
   "branch": "main",
-  "checkpoints_count": 11,
+  "checkpoints_count": 14,
   "files_touched": [
     "AGENTS.md",
     "Cargo.lock",
@@ -42,13 +42,19 @@
       "transcript": "/33/fbfa77e7c2/4/full.jsonl",
       "content_hash": "/33/fbfa77e7c2/4/content_hash.txt",
       "prompt": "/33/fbfa77e7c2/4/prompt.txt"
+    },
+    {
+      "metadata": "/33/fbfa77e7c2/5/metadata.json",
+      "transcript": "/33/fbfa77e7c2/5/full.jsonl",
+      "content_hash": "/33/fbfa77e7c2/5/content_hash.txt",
+      "prompt": "/33/fbfa77e7c2/5/prompt.txt"
     }
   ],
   "token_usage": {
-    "input_tokens": 856064,
+    "input_tokens": 930409,
     "cache_creation_tokens": 0,
-    "cache_read_tokens": 2457429,
-    "output_tokens": 19623,
-    "api_call_count": 101
+    "cache_read_tokens": 2763068,
+    "output_tokens": 22424,
+    "api_call_count": 121
   }
 }
