@@ -1,0 +1,40 @@
+{
+  "cli_version": "0.5.3",
+  "checkpoint_id": "33fbfa77e7c2",
+  "session_id": "ses_282fffdecffeIDDm1T7qawFlzr",
+  "strategy": "manual-commit",
+  "created_at": "2026-04-11T15:22:56.170898Z",
+  "branch": "main",
+  "checkpoints_count": 4,
+  "files_touched": [
+    "Cargo.lock",
+    "src/api.rs",
+    "src/app.rs",
+    "src/storage.rs"
+  ],
+  "agent": "OpenCode",
+  "model": "google/gemini-3.1-pro-preview",
+  "turn_id": "f1d509c55a78",
+  "token_usage": {
+    "input_tokens": 418707,
+    "cache_creation_tokens": 0,
+    "cache_read_tokens": 1039503,
+    "output_tokens": 3893,
+    "api_call_count": 55
+  },
+  "session_metrics": {
+    "turn_count": 6
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-04-11T15:22:55.364113Z",
+    "agent_lines": 393,
+    "agent_removed": 283,
+    "human_added": 29,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 422,
+    "total_lines_changed": 730,
+    "agent_percentage": 92.6027397260274,
+    "metric_version": 2
+  }
+}

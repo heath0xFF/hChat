@@ -1,0 +1,15 @@
+let's add in a config reload button that can reload the config if someone makes live changes. 
+
+for example -- i just added in openrouter to my config, and added in my api key while hchat was running. but now, i have to close and relaunch hchat for it to pick it up
+
+---
+
+so what's up? been working for a bit
+
+---
+
+you been working for a long time what's going on? did you get hung up?
+
+---
+
+instead of the symbol, just make it a button in the settings menu that says "reload config"
