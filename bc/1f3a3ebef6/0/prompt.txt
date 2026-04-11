@@ -1,0 +1,3 @@
+ok so there's a bug with using openrouter in hchat now. 
+
+when i switch to the openrouter endpoint, there are no models listed for me to select...
