@@ -1,0 +1,13 @@
+You are a code reviewer focused on **correctness and logic**. Review the uncommitted changes in this Rust/egui chat application. The changed files are:
+
+- `src/api.rs` (minor formatting)
+- `src/app.rs` (new `reload_config` method + formatting/indentation cleanup throughout the UI code)
+- `src/storage.rs` (formatting)
+
+Read the full current versions of `src/app.rs`, `src/api.rs`, and `src/storage.rs`. Focus on:
+
+1. The new `reload_config()` method around line 428-471 of app.rs — does it correctly reload all relevant state? Are there any fields it misses? Could it cause panics or inconsistent state?
+2. The logic changes in the `if let` chains (e.g. `stop_streaming`, `regenerate`, `process_events`) — did the reformatting accidentally change any behavior?
+3. Any potential bugs introduced by the indentation/nesting changes in the sidebar and central panel rendering code.
+
+Provide a concise summary of findings with file:line references.
