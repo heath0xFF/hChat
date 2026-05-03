@@ -868,72 +868,6 @@ impl eframe::App for ChatApp {
             }
         });
 
-        // Bottom input panel
-        egui::Panel::bottom("input_panel").show_inside(ui, |ui| {
-            if let Some(err) = &self.error {
-                ui.colored_label(egui::Color32::RED, format!("Error: {err}"));
-            }
-
-            let enter_pressed = ui.input(|i| i.key_pressed(egui::Key::Enter));
-            let shift_held = ui.input(|i| i.modifiers.shift);
-
-            ui.horizontal(|ui| {
-                let response = ui.add_sized(
-                    [ui.available_width() - 60.0, 35.0],
-                    egui::TextEdit::multiline(&mut self.input)
-                        .hint_text("Type a message... (Shift+Enter for newline)")
-                        .desired_rows(1),
-                );
-
-                if enter_pressed && response.has_focus() {
-                    if shift_held {
-                        self.input.push('\n');
-                    } else {
-                        if self.input.ends_with('\n') {
-                            self.input.pop();
-                        }
-                        self.send_message();
-                    }
-                }
-
-                if self.streaming {
-                    if ui.button("■ Stop").clicked() {
-                        self.stop_streaming();
-                    }
-                } else {
-                    let send_enabled = !self.input.trim().is_empty() && !self.models.is_empty();
-                    if ui
-                        .add_enabled(send_enabled, egui::Button::new("Send"))
-                        .clicked()
-                    {
-                        self.send_message();
-                        response.request_focus();
-                    }
-                }
-            });
-
-            ui.horizontal(|ui| {
-                if self.streaming {
-                    ui.spinner();
-                }
-                if let Some(usage) = &self.last_usage {
-                    let parts: Vec<String> = [
-                        usage.prompt_tokens.map(|t| format!("prompt: {t}")),
-                        usage.completion_tokens.map(|t| format!("completion: {t}")),
-                        usage.total_tokens.map(|t| format!("total: {t}")),
-                    ]
-                    .into_iter()
-                    .flatten()
-                    .collect();
-                    if !parts.is_empty() {
-                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                            ui.weak(parts.join(" | "));
-                        });
-                    }
-                }
-            });
-        });
-
         // Sidebar
         if self.show_sidebar {
             egui::Panel::left("sidebar")
@@ -1181,6 +1115,72 @@ impl eframe::App for ChatApp {
                     }
                 });
         }
+
+        // Bottom input panel (only spans area between sidebars)
+        egui::Panel::bottom("input_panel").show_inside(ui, |ui| {
+            if let Some(err) = &self.error {
+                ui.colored_label(egui::Color32::RED, format!("Error: {err}"));
+            }
+
+            let enter_pressed = ui.input(|i| i.key_pressed(egui::Key::Enter));
+            let shift_held = ui.input(|i| i.modifiers.shift);
+
+            ui.horizontal(|ui| {
+                let response = ui.add_sized(
+                    [ui.available_width() - 60.0, 90.0],
+                    egui::TextEdit::multiline(&mut self.input)
+                        .hint_text("Type a message... (Shift+Enter for newline)")
+                        .desired_rows(4),
+                );
+
+                if enter_pressed && response.has_focus() {
+                    if shift_held {
+                        self.input.push('\n');
+                    } else {
+                        if self.input.ends_with('\n') {
+                            self.input.pop();
+                        }
+                        self.send_message();
+                    }
+                }
+
+                if self.streaming {
+                    if ui.button("■ Stop").clicked() {
+                        self.stop_streaming();
+                    }
+                } else {
+                    let send_enabled = !self.input.trim().is_empty() && !self.models.is_empty();
+                    if ui
+                        .add_enabled(send_enabled, egui::Button::new("Send"))
+                        .clicked()
+                    {
+                        self.send_message();
+                        response.request_focus();
+                    }
+                }
+            });
+
+            ui.horizontal(|ui| {
+                if self.streaming {
+                    ui.spinner();
+                }
+                if let Some(usage) = &self.last_usage {
+                    let parts: Vec<String> = [
+                        usage.prompt_tokens.map(|t| format!("prompt: {t}")),
+                        usage.completion_tokens.map(|t| format!("completion: {t}")),
+                        usage.total_tokens.map(|t| format!("total: {t}")),
+                    ]
+                    .into_iter()
+                    .flatten()
+                    .collect();
+                    if !parts.is_empty() {
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            ui.weak(parts.join(" | "));
+                        });
+                    }
+                }
+            });
+        });
 
         // Central message area
         let panel_fill = ui.visuals().panel_fill;
