@@ -1,0 +1,5 @@
+in this app, i think the default size of the message box is too small from a height perspective, and it also goes across the whole bottom. I'd like for the message box to be a bit taller, and i'd like for the left and right sidebars to go all the way down and for the message box to be just in the middle in just the chat window
+
+---
+
+i actually am on a new laptop and had to install rust. test now yeah?
