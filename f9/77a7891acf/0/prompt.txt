@@ -1,0 +1,5 @@
+5 tasks left. what's the play?
+
+---
+
+something is _way_ broken. i asked a simple question and it just kept repeating "reasoning" reallllly fast and the context numbers went WAY up.
