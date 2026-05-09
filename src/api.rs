@@ -9,6 +9,19 @@ use tokio_util::sync::CancellationToken;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Returns true iff `url` parses and its host is exactly `expected_host`. Used
+/// to gate provider-specific behavior (URL rewrite, vendor headers) so a user
+/// can't accidentally route their bearer token to OpenRouter by typing
+/// `https://my-proxy.example/openrouter.ai/v1` — substring matching of the
+/// host name was a credential-redirection footgun.
+fn host_is(url: &str, expected_host: &str) -> bool {
+    reqwest::Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(|h| h.to_ascii_lowercase()))
+        .as_deref()
+        == Some(expected_host)
+}
+
 #[derive(Debug, Deserialize)]
 pub struct OllamaModel {
     pub name: String,
@@ -86,7 +99,15 @@ pub enum StreamEvent {
     Done,
     Error(String),
     UsageInfo(Usage),
-    ModelsLoaded(Vec<String>),
+    /// `url` is the endpoint the fetch was started against. The receiver
+    /// validates it still matches the currently-selected endpoint before
+    /// applying — without that check, switching endpoints while a fetch is
+    /// in flight could populate the new endpoint with the old endpoint's
+    /// model list.
+    ModelsLoaded {
+        url: String,
+        models: Vec<String>,
+    },
 }
 
 const MAX_ERROR_BODY: usize = 4096;
@@ -101,8 +122,12 @@ pub async fn fetch_models(base_url: &str, api_key: Option<&str>) -> Result<Vec<S
 
     let mut url = base_url.trim_end_matches('/').to_string();
 
-    // Auto-fix OpenRouter URLs (users often provide just the domain or the completions endpoint)
-    if url.contains("openrouter.ai") {
+    // Auto-fix OpenRouter URLs (users often provide just the domain or the
+    // completions endpoint). Only rewrite when the URL's host is literally
+    // openrouter.ai — substring matching would let `evil.com/openrouter.ai`
+    // hijack the rewrite and leak the bearer token.
+    let is_openrouter = host_is(&url, "openrouter.ai");
+    if is_openrouter {
         url = "https://openrouter.ai/api/v1".to_string();
     } else if url.ends_with("/chat/completions") {
         url = url.trim_end_matches("/chat/completions").to_string();
@@ -119,7 +144,7 @@ pub async fn fetch_models(base_url: &str, api_key: Option<&str>) -> Result<Vec<S
     if let Some(key) = api_key {
         request = request.bearer_auth(key);
     }
-    if url.contains("openrouter.ai") {
+    if is_openrouter {
         request = request
             .header("HTTP-Referer", "https://github.com/hhheath/hChat")
             .header("X-Title", "hChat");
@@ -194,7 +219,8 @@ pub fn stream_chat(
         };
         let mut base_url = base_url.trim_end_matches('/').to_string();
 
-        if base_url.contains("openrouter.ai") {
+        let is_openrouter = host_is(&base_url, "openrouter.ai");
+        if is_openrouter {
             base_url = "https://openrouter.ai/api/v1".to_string();
         } else if base_url.ends_with("/chat/completions") {
             base_url = base_url.trim_end_matches("/chat/completions").to_string();
@@ -218,7 +244,7 @@ pub fn stream_chat(
         if let Some(key) = &api_key {
             request = request.bearer_auth(key);
         }
-        if base_url.contains("openrouter.ai") {
+        if is_openrouter {
             request = request
                 .header("HTTP-Referer", "https://github.com/hhheath/hChat")
                 .header("X-Title", "hChat");
@@ -375,5 +401,37 @@ mod tests {
     async fn test_openrouter_fetch() {
         let models = fetch_models("https://openrouter.ai/api/v1", None).await;
         println!("Result: {:?}", models);
+    }
+
+    #[test]
+    fn host_is_exact_match() {
+        assert!(host_is("https://openrouter.ai/api/v1", "openrouter.ai"));
+        assert!(host_is("https://openrouter.ai", "openrouter.ai"));
+        assert!(host_is("http://openrouter.ai/foo", "openrouter.ai"));
+        // Case-insensitive host
+        assert!(host_is("https://OpenRouter.AI/api", "openrouter.ai"));
+    }
+
+    #[test]
+    fn host_is_rejects_substring_attacks() {
+        // Path-component "openrouter.ai" — the credential redirect bug.
+        assert!(!host_is(
+            "https://my-proxy.example/openrouter.ai/v1",
+            "openrouter.ai"
+        ));
+        // Subdomain prefix
+        assert!(!host_is(
+            "https://openrouter.ai.evil.example/api",
+            "openrouter.ai"
+        ));
+        // Different host
+        assert!(!host_is("https://openai.com/v1", "openrouter.ai"));
+    }
+
+    #[test]
+    fn host_is_rejects_unparseable() {
+        assert!(!host_is("openrouter.ai/api/v1", "openrouter.ai")); // no scheme
+        assert!(!host_is("not a url", "openrouter.ai"));
+        assert!(!host_is("", "openrouter.ai"));
     }
 }

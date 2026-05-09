@@ -147,8 +147,32 @@ impl Config {
 
         let contents =
             fs::read_to_string(&path).map_err(|e| format!("Could not read config file: {e}"))?;
-        let mut config: Config =
-            toml::from_str(&contents).map_err(|e| format!("Could not parse config: {e}"))?;
+        let mut config: Config = match toml::from_str(&contents) {
+            Ok(c) => c,
+            Err(e) => {
+                // Don't silently overwrite the user's settings with defaults —
+                // back up the broken file so they can recover, then surface
+                // the parse error. The fallback in `load()` will pick up
+                // defaults but the original is preserved on disk.
+                let stamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let backup = path.with_extension(format!("toml.broken-{stamp}"));
+                if let Err(rename_err) = fs::rename(&path, &backup) {
+                    eprintln!(
+                        "Warning: could not back up corrupt config to {}: {rename_err}",
+                        backup.display()
+                    );
+                } else {
+                    eprintln!(
+                        "Note: corrupt config backed up to {}",
+                        backup.display()
+                    );
+                }
+                return Err(format!("Could not parse config: {e}"));
+            }
+        };
         config.sanitize();
         Ok(config)
     }

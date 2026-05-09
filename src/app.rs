@@ -159,17 +159,23 @@ impl ChatApp {
     }
 
     fn fetch_models(&mut self) {
-        if self.models_loading {
-            return; // fetch already in progress
-        }
+        // Always start a fresh fetch — replacing `models_rx` orphans any
+        // in-flight task's sender, so its result silently disappears (the
+        // dropped receiver causes `tx.send` to return Err). This is what we
+        // want when the user switches endpoint mid-fetch: the old endpoint's
+        // result must not land as the new endpoint's model list.
         let base_url = self.base_url.clone();
         let api_key = self.current_api_key().map(|s| s.to_string());
         let (tx, rx) = mpsc::unbounded_channel();
 
+        let url_for_event = base_url.clone();
         self.runtime.spawn(async move {
             match api::fetch_models(&base_url, api_key.as_deref()).await {
                 Ok(models) => {
-                    let _ = tx.send(StreamEvent::ModelsLoaded(models));
+                    let _ = tx.send(StreamEvent::ModelsLoaded {
+                        url: url_for_event,
+                        models,
+                    });
                 }
                 Err(e) => {
                     let _ = tx.send(StreamEvent::Error(e));
@@ -206,6 +212,12 @@ impl ChatApp {
         self.error = None;
         self.last_usage = None;
         self.session_cost = 0.0;
+        // Critical: clear edit state. Otherwise Ctrl+N during an in-progress
+        // edit leaves `editing_message = Some(N)` pointing into the new
+        // (smaller) conversation, and the Nth message of the next chat will
+        // render in edit mode with the prior chat's edit_buffer contents.
+        self.editing_message = None;
+        self.edit_buffer.clear();
     }
 
     fn save_current(&mut self) {
@@ -213,10 +225,8 @@ impl ChatApp {
             return;
         }
 
-        match self.current_conversation_id {
-            Some(id) => {
-                self.storage.save_messages(id, &self.messages);
-            }
+        let save_result: Result<(), String> = match self.current_conversation_id {
+            Some(id) => self.storage.save_messages(id, &self.messages),
             None => {
                 let title = self
                     .messages
@@ -239,11 +249,24 @@ impl ChatApp {
                     })
                     .unwrap_or_else(|| "New chat".to_string());
 
-                let id = self.storage.create_conversation(&title);
-                self.storage.save_messages(id, &self.messages);
-                self.current_conversation_id = Some(id);
+                match self.storage.create_conversation(&title) {
+                    Ok(id) => {
+                        let r = self.storage.save_messages(id, &self.messages);
+                        if r.is_ok() {
+                            self.current_conversation_id = Some(id);
+                        }
+                        r
+                    }
+                    Err(e) => Err(e),
+                }
             }
         };
+
+        if let Err(e) = save_result {
+            // Surface DB errors so the user knows their conversation didn't
+            // persist. Previously these were silently swallowed.
+            self.error = Some(format!("Save failed: {e}"));
+        }
 
         self.refresh_conversation_list();
     }
@@ -486,11 +509,15 @@ impl ChatApp {
         if let Some(rx) = &mut self.models_rx {
             while let Ok(event) = rx.try_recv() {
                 match event {
-                    StreamEvent::ModelsLoaded(models) if !models.is_empty() => {
+                    StreamEvent::ModelsLoaded { url, models }
+                        if !models.is_empty() && url == self.base_url =>
+                    {
                         self.models = models;
                         self.selected_model =
                             self.selected_model.min(self.models.len().saturating_sub(1));
                     }
+                    // Result for an endpoint we're no longer on — silently drop.
+                    StreamEvent::ModelsLoaded { .. } => {}
                     StreamEvent::Done => {
                         self.models_loading = false;
                         self.models_rx = None;
@@ -590,6 +617,12 @@ impl ChatApp {
                         {
                             self.messages.pop();
                         }
+                        // Save the partial response. Without this, a stream
+                        // that errors out leaves an unsaved partial assistant
+                        // message in memory that gets bundled into the next
+                        // successful save — or lost entirely if the user
+                        // closes the app before another Done.
+                        just_finished_streaming = true;
                         break;
                     }
                     _ => {}
@@ -759,14 +792,20 @@ impl eframe::App for ChatApp {
             ctx.request_repaint();
         }
 
-        // Keyboard shortcuts
-        let new_chat =
-            ui.input(|i| i.key_pressed(egui::Key::N) && (i.modifiers.ctrl || i.modifiers.command));
+        // Keyboard shortcuts. Gated on `wants_keyboard_input` so they don't
+        // hijack typing into a focused TextEdit (system prompt, rename buffer,
+        // edit buffer, stop sequences). Tradeoff: to use Ctrl+F or Ctrl+N
+        // while a text field is focused, the user has to defocus first
+        // (Escape, or click elsewhere). Worth it to avoid surprising
+        // interrupts while editing.
+        let typing = ctx.egui_wants_keyboard_input();
+        let new_chat = !typing
+            && ui.input(|i| i.key_pressed(egui::Key::N) && (i.modifiers.ctrl || i.modifiers.command));
         if new_chat {
             self.new_conversation();
         }
-        let toggle_find =
-            ui.input(|i| i.key_pressed(egui::Key::F) && (i.modifiers.ctrl || i.modifiers.command));
+        let toggle_find = !typing
+            && ui.input(|i| i.key_pressed(egui::Key::F) && (i.modifiers.ctrl || i.modifiers.command));
         if toggle_find {
             self.show_find = !self.show_find;
             if !self.show_find {
@@ -774,6 +813,8 @@ impl eframe::App for ChatApp {
                 self.last_scrolled_find_query = None;
             }
         }
+        // Escape closes find from anywhere — including from inside the find
+        // input itself, which is exactly where you want it to work.
         if ui.input(|i| i.key_pressed(egui::Key::Escape)) && self.show_find {
             self.show_find = false;
             self.find_query.clear();

@@ -1,6 +1,7 @@
 use crate::message::{Message, Role};
 use rusqlite::{Connection, params};
 use std::path::PathBuf;
+use std::time::Duration;
 
 pub struct Conversation {
     pub id: i64,
@@ -26,6 +27,10 @@ impl Storage {
         // Enable foreign keys and WAL mode for better concurrency
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
             .ok();
+        // Wait up to 5s for a lock instead of immediately returning SQLITE_BUSY.
+        // Without this, two hChat windows writing concurrently race and the
+        // loser silently drops its write (we use `.ok()` on most calls).
+        let _ = conn.busy_timeout(Duration::from_secs(5));
         let storage = Self { conn };
         storage.init_tables();
         storage
@@ -59,14 +64,14 @@ impl Storage {
             .expect("Failed to create tables");
     }
 
-    pub fn create_conversation(&self, title: &str) -> i64 {
+    pub fn create_conversation(&self, title: &str) -> Result<i64, String> {
         self.conn
             .execute(
                 "INSERT INTO conversations (title) VALUES (?1)",
                 params![title],
             )
-            .expect("Failed to create conversation");
-        self.conn.last_insert_rowid()
+            .map_err(|e| format!("Failed to create conversation: {e}"))?;
+        Ok(self.conn.last_insert_rowid())
     }
 
     pub fn update_conversation_title(&self, id: i64, title: &str) {
@@ -114,30 +119,27 @@ impl Storage {
         }
     }
 
-    pub fn save_messages(&self, conversation_id: i64, messages: &[Message]) {
+    pub fn save_messages(
+        &self,
+        conversation_id: i64,
+        messages: &[Message],
+    ) -> Result<(), String> {
         // Use a transaction so delete + re-insert is atomic
-        let tx = match self.conn.unchecked_transaction() {
-            Ok(tx) => tx,
-            Err(_) => return,
-        };
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| format!("Failed to start transaction: {e}"))?;
 
-        if tx
-            .execute(
-                "DELETE FROM messages WHERE conversation_id = ?1",
-                params![conversation_id],
-            )
-            .is_err()
-        {
-            return; // tx rolls back on drop
-        }
+        tx.execute(
+            "DELETE FROM messages WHERE conversation_id = ?1",
+            params![conversation_id],
+        )
+        .map_err(|e| format!("Failed to clear messages: {e}"))?;
 
         {
-            let mut stmt = match tx
+            let mut stmt = tx
                 .prepare("INSERT INTO messages (conversation_id, role, content, position) VALUES (?1, ?2, ?3, ?4)")
-            {
-                Ok(s) => s,
-                Err(_) => return,
-            };
+                .map_err(|e| format!("Failed to prepare insert: {e}"))?;
 
             for (i, msg) in messages.iter().enumerate() {
                 let role_str = match msg.role {
@@ -145,12 +147,8 @@ impl Storage {
                     Role::User => "user",
                     Role::Assistant => "assistant",
                 };
-                if stmt
-                    .execute(params![conversation_id, role_str, msg.content, i])
-                    .is_err()
-                {
-                    return; // tx rolls back on drop
-                }
+                stmt.execute(params![conversation_id, role_str, msg.content, i])
+                    .map_err(|e| format!("Failed to insert message: {e}"))?;
             }
         }
 
@@ -158,9 +156,13 @@ impl Storage {
             "UPDATE conversations SET updated_at = datetime('now') WHERE id = ?1",
             params![conversation_id],
         )
-        .ok();
+        .map_err(|e| format!("Failed to update timestamp: {e}"))?;
 
-        tx.commit().ok();
+        // Don't swallow commit failures: a failed commit means the user thinks
+        // their conversation persisted when SQLite rejected it (disk full,
+        // SQLITE_BUSY past timeout, etc.). The caller surfaces this via the
+        // app's error banner.
+        tx.commit().map_err(|e| format!("Failed to commit: {e}"))
     }
 
     pub fn load_messages(&self, conversation_id: i64) -> Vec<Message> {
