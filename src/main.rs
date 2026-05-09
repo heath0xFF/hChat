@@ -1,7 +1,10 @@
 mod api;
 mod app;
+mod commands;
 mod config;
+mod markdown;
 mod message;
+mod model_limits;
 mod storage;
 
 fn main() -> eframe::Result<()> {

@@ -182,6 +182,7 @@ impl Storage {
             Ok(Message {
                 role,
                 content: row.get(1)?,
+                created_at: None,
             })
         })
         .map(|rows| rows.filter_map(|r| r.ok()).collect())

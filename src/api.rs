@@ -38,6 +38,14 @@ struct ChatRequest {
     temperature: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     max_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    top_p: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    frequency_penalty: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    presence_penalty: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none", rename = "stop")]
+    stop_sequences: Option<Vec<String>>,
 }
 
 #[derive(Deserialize)]
@@ -63,10 +71,18 @@ struct ChunkChoice {
 #[derive(Deserialize)]
 struct Delta {
     content: Option<String>,
+    /// Some providers (DeepSeek, OpenRouter forwarding reasoning models) emit a
+    /// separate `reasoning` field for chain-of-thought. We surface it as a
+    /// `Reasoning` event so the UI can show it collapsed.
+    reasoning: Option<String>,
 }
 
 pub enum StreamEvent {
     Token(String),
+    /// Reasoning/thinking text from a separate provider field. Distinct from
+    /// `Token` so the UI can render it differently. For inline `<think>` tags
+    /// inside content, the UI parses the assembled text itself.
+    Reasoning(String),
     Done,
     Error(String),
     UsageInfo(Usage),
@@ -142,6 +158,10 @@ pub struct ChatParams {
     pub messages: Vec<Message>,
     pub temperature: Option<f32>,
     pub max_tokens: Option<u32>,
+    pub top_p: Option<f32>,
+    pub frequency_penalty: Option<f32>,
+    pub presence_penalty: Option<f32>,
+    pub stop_sequences: Option<Vec<String>>,
     pub api_key: Option<String>,
 }
 
@@ -157,6 +177,10 @@ pub fn stream_chat(
             messages,
             temperature,
             max_tokens,
+            top_p,
+            frequency_penalty,
+            presence_penalty,
+            stop_sequences,
             api_key,
         } = params;
         let client = match Client::builder().connect_timeout(CONNECT_TIMEOUT).build() {
@@ -184,6 +208,10 @@ pub fn stream_chat(
             stream: true,
             temperature,
             max_tokens,
+            top_p,
+            frequency_penalty,
+            presence_penalty,
+            stop_sequences,
         };
 
         let mut request = client.post(&url).json(&req);
@@ -295,10 +323,14 @@ pub fn stream_chat(
                         if let Ok(chunk) = serde_json::from_str::<ChatChunk>(data) {
                             if let Some(choices) = chunk.choices {
                                 for choice in choices {
-                                    if let Some(delta) = choice.delta
-                                        && let Some(content) = delta.content {
+                                    if let Some(delta) = choice.delta {
+                                        if let Some(reasoning) = delta.reasoning {
+                                            let _ = tx.send(StreamEvent::Reasoning(reasoning));
+                                        }
+                                        if let Some(content) = delta.content {
                                             let _ = tx.send(StreamEvent::Token(content));
                                         }
+                                    }
                                 }
                             }
                             if let Some(usage) = chunk.usage {
