@@ -1,0 +1,34 @@
+{
+  "cli_version": "0.6.1",
+  "checkpoint_id": "079553f2b985",
+  "strategy": "manual-commit",
+  "branch": "feat/phase1-foundation-polish",
+  "checkpoints_count": 0,
+  "files_touched": [
+    "example.config.toml",
+    "src/api.rs",
+    "src/app.rs",
+    "src/commands.rs",
+    "src/config.rs",
+    "src/main.rs",
+    "src/markdown.rs",
+    "src/message.rs",
+    "src/model_limits.rs",
+    "src/storage.rs"
+  ],
+  "sessions": [
+    {
+      "metadata": "/07/9553f2b985/0/metadata.json",
+      "transcript": "/07/9553f2b985/0/full.jsonl",
+      "content_hash": "/07/9553f2b985/0/content_hash.txt",
+      "prompt": "/07/9553f2b985/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 713,
+    "cache_creation_tokens": 236644,
+    "cache_read_tokens": 11848736,
+    "output_tokens": 101989,
+    "api_call_count": 88
+  }
+}

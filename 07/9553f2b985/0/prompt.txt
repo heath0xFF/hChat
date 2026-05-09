@@ -1,0 +1,21 @@
+i'm bored this morning. read over the codebase and give me some ideas for features to make hchat even better
+
+---
+
+why not just do it all? lol
+
+---
+
+let's make a plan to write it all.
+
+---
+
+Answers to questions: 
+
+1. tree
+2. opt-in
+3. i'll take your suggestion here
+4. let's make it so we have our own tools, but it's user configurable as well -- would be cool to have community tools. then we can do MCP
+5. defer compare mode 
+
+looks good to me. make PRs, be extremely thorough in testing (i.e. spin up review agents when things are done), and don't forget to run cargo clippy.
