@@ -3,7 +3,6 @@ use crate::commands::{self, Command, ParseResult};
 use crate::config::{Config, Endpoint};
 use crate::markdown::{self, Segment};
 use crate::message::{Message, Role};
-use crate::model_limits;
 use crate::storage::Storage;
 use eframe::egui;
 use egui_commonmark::{CommonMarkCache, CommonMarkViewer};
@@ -1394,9 +1393,9 @@ impl eframe::App for ChatApp {
                 }
             });
 
-            // Live token estimate + context budget bar. Cached on a cheap
-            // signature so we don't re-encode the entire conversation through
-            // tiktoken every frame; only when something materially changed.
+            // Live token estimate. Cached on a cheap content signature so we
+            // don't re-encode the entire conversation through tiktoken every
+            // frame; only when something materially changed.
             let signature = token_signature(&self.system_prompt, &self.messages, &self.input);
             let approx_tokens = match self.token_cache {
                 Some((sig, count)) if sig == signature => count,
@@ -1406,35 +1405,12 @@ impl eframe::App for ChatApp {
                     count
                 }
             };
-            let model_name = self.selected_model_name();
-            let ctx_limit = model_limits::context_window(model_name);
 
             ui.horizontal(|ui| {
                 if self.streaming {
                     ui.spinner();
                 }
-                let count_label = match ctx_limit {
-                    Some(limit) => format!(
-                        "~{} / {} tokens ({:.0}%)",
-                        approx_tokens,
-                        limit,
-                        (approx_tokens as f32 / limit as f32) * 100.0
-                    ),
-                    None => format!("~{} tokens", approx_tokens),
-                };
-                ui.weak(&count_label);
-                if let Some(limit) = ctx_limit {
-                    let frac = (approx_tokens as f32 / limit as f32).clamp(0.0, 1.0);
-                    let bar = egui::ProgressBar::new(frac)
-                        .desired_width(120.0)
-                        .show_percentage();
-                    let bar_resp = ui.add(bar);
-                    if frac >= 0.85 {
-                        bar_resp.on_hover_text(
-                            "Approaching context limit — older messages will be dropped or fail",
-                        );
-                    }
-                }
+                ui.weak(format!("~{approx_tokens} tokens"));
                 if let Some(usage) = &self.last_usage {
                     let parts: Vec<String> = [
                         usage.prompt_tokens.map(|t| format!("prompt: {t}")),
