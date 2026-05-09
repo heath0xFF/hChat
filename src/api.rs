@@ -324,10 +324,22 @@ pub fn stream_chat(
                             if let Some(choices) = chunk.choices {
                                 for choice in choices {
                                     if let Some(delta) = choice.delta {
-                                        if let Some(reasoning) = delta.reasoning {
+                                        // Skip empty strings: some providers
+                                        // (Ollama qwen3 thinking, OpenAI keep-
+                                        // alives) emit `content: ""` alongside
+                                        // a reasoning delta. Treating that as
+                                        // "content arrived" prematurely closes
+                                        // the <think> block and the next
+                                        // reasoning delta re-opens a new one,
+                                        // producing dozens of tiny blocks.
+                                        if let Some(reasoning) = delta.reasoning
+                                            && !reasoning.is_empty()
+                                        {
                                             let _ = tx.send(StreamEvent::Reasoning(reasoning));
                                         }
-                                        if let Some(content) = delta.content {
+                                        if let Some(content) = delta.content
+                                            && !content.is_empty()
+                                        {
                                             let _ = tx.send(StreamEvent::Token(content));
                                         }
                                     }

@@ -514,6 +514,12 @@ impl ChatApp {
             while let Ok(event) = rx.try_recv() {
                 match event {
                     StreamEvent::Reasoning(text) => {
+                        // Empty deltas should never get here (api.rs filters
+                        // them) but if one slips through, drop it — it would
+                        // open a <think> with no body.
+                        if text.is_empty() {
+                            continue;
+                        }
                         if let Some(last) = self.messages.last_mut()
                             && last.role == Role::Assistant
                         {
@@ -525,6 +531,12 @@ impl ChatApp {
                         }
                     }
                     StreamEvent::Token(token) => {
+                        // Empty content tokens must not close a streaming
+                        // <think> block — see api.rs comment for the failure
+                        // mode this prevents.
+                        if token.is_empty() {
+                            continue;
+                        }
                         if let Some(last) = self.messages.last_mut()
                             && last.role == Role::Assistant
                         {
