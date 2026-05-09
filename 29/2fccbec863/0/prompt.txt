@@ -1,0 +1,15 @@
+ok that works great. 
+
+spin up some paranoid code review agents and tell me what they find.
+
+---
+
+do the whole batch
+
+---
+
+i think we merge the PR, tag a new release and then start working on other phases
+
+---
+
+ok before we do all this -- i want you to update the readme with this information

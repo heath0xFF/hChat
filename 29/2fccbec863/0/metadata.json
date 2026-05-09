@@ -1,0 +1,32 @@
+{
+  "cli_version": "0.6.1",
+  "checkpoint_id": "292fccbec863",
+  "session_id": "21f88703-b490-4493-82da-dd3c5a0b700e",
+  "strategy": "manual-commit",
+  "created_at": "2026-05-09T17:30:19.667063Z",
+  "branch": "feat/phase1-foundation-polish",
+  "checkpoints_count": 1,
+  "files_touched": [],
+  "agent": "Claude Code",
+  "model": "",
+  "turn_id": "8f11dd68d3f9",
+  "token_usage": {
+    "input_tokens": 804,
+    "cache_creation_tokens": 330657,
+    "cache_read_tokens": 23327186,
+    "output_tokens": 169367,
+    "api_call_count": 134
+  },
+  "session_metrics": {
+    "turn_count": 12
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    }
+  ]
+}
