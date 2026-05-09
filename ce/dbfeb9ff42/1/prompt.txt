@@ -1,0 +1,9 @@
+read the latest conversation in ~/.claude/projects/-Users-heath-code-hChat/ and tell me what's next to do
+
+---
+
+yep. phase one and phase two together. let’s rip
+
+---
+
+no need for migration of user data here. i’m the only user.
