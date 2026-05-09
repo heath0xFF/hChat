@@ -1682,6 +1682,7 @@ name = "hchat"
 version = "0.6.0"
 dependencies = [
  "arboard",
+ "base64",
  "dirs",
  "eframe",
  "egui_commonmark",

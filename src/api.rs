@@ -393,6 +393,96 @@ fn newline_positions(s: &str) -> impl Iterator<Item = usize> + '_ {
         .filter_map(|(i, b)| if b == b'\n' { Some(i) } else { None })
 }
 
+#[derive(Deserialize)]
+struct NonStreamingChatResponse {
+    choices: Vec<NonStreamingChoice>,
+}
+
+#[derive(Deserialize)]
+struct NonStreamingChoice {
+    message: NonStreamingMessage,
+}
+
+#[derive(Deserialize)]
+struct NonStreamingMessage {
+    content: Option<String>,
+}
+
+#[derive(Serialize)]
+struct NonStreamingChatRequest<'a> {
+    model: &'a str,
+    messages: &'a [Message],
+    stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    max_tokens: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    temperature: Option<f32>,
+}
+
+/// Single-shot non-streaming chat completion. Used by auto-title (one short
+/// reply, no streaming UI). Always returns the full assistant message string
+/// or an error.
+pub async fn complete_once(
+    base_url: &str,
+    model: &str,
+    messages: &[Message],
+    api_key: Option<&str>,
+    max_tokens: Option<u32>,
+    temperature: Option<f32>,
+) -> Result<String, String> {
+    let client = Client::builder()
+        .timeout(REQUEST_TIMEOUT)
+        .connect_timeout(CONNECT_TIMEOUT)
+        .build()
+        .map_err(|e| format!("Failed to create HTTP client: {e}"))?;
+
+    let mut base_url = base_url.trim_end_matches('/').to_string();
+    let is_openrouter = host_is(&base_url, "openrouter.ai");
+    if is_openrouter {
+        base_url = "https://openrouter.ai/api/v1".to_string();
+    } else if base_url.ends_with("/chat/completions") {
+        base_url = base_url.trim_end_matches("/chat/completions").to_string();
+    }
+    let url = format!("{}/chat/completions", base_url);
+
+    let req = NonStreamingChatRequest {
+        model,
+        messages,
+        stream: false,
+        max_tokens,
+        temperature,
+    };
+
+    let mut request = client.post(&url).json(&req);
+    if let Some(key) = api_key {
+        request = request.bearer_auth(key);
+    }
+    if is_openrouter {
+        request = request
+            .header("HTTP-Referer", "https://github.com/hhheath/hChat")
+            .header("X-Title", "hChat");
+    }
+
+    let resp = request
+        .send()
+        .await
+        .map_err(|e| format!("Request failed: {e}"))?;
+    if !resp.status().is_success() {
+        let status = resp.status();
+        return Err(format!("{status}"));
+    }
+    let parsed: NonStreamingChatResponse = resp
+        .json()
+        .await
+        .map_err(|e| format!("Failed to parse response: {e}"))?;
+    parsed
+        .choices
+        .into_iter()
+        .next()
+        .and_then(|c| c.message.content)
+        .ok_or_else(|| "Empty response".to_string())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
