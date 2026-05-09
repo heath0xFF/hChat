@@ -65,6 +65,13 @@ pub struct Config {
     pub saved_endpoints: Vec<Endpoint>,
     pub font_family: String,
     pub mono_font_family: String,
+    /// Nucleus sampling. `None` (or `< 0`) means "don't send", which is what most
+    /// users want — leaving it to the model default.
+    pub top_p: Option<f32>,
+    pub frequency_penalty: Option<f32>,
+    pub presence_penalty: Option<f32>,
+    /// Stop sequences. Empty vec → don't send.
+    pub stop_sequences: Vec<String>,
 }
 
 impl Default for Config {
@@ -82,6 +89,10 @@ impl Default for Config {
             saved_endpoints: vec![Endpoint::new("http://localhost:11434/v1")],
             font_family: String::new(),
             mono_font_family: String::new(),
+            top_p: None,
+            frequency_penalty: None,
+            presence_penalty: None,
+            stop_sequences: Vec::new(),
         }
     }
 }
@@ -136,8 +147,32 @@ impl Config {
 
         let contents =
             fs::read_to_string(&path).map_err(|e| format!("Could not read config file: {e}"))?;
-        let mut config: Config =
-            toml::from_str(&contents).map_err(|e| format!("Could not parse config: {e}"))?;
+        let mut config: Config = match toml::from_str(&contents) {
+            Ok(c) => c,
+            Err(e) => {
+                // Don't silently overwrite the user's settings with defaults —
+                // back up the broken file so they can recover, then surface
+                // the parse error. The fallback in `load()` will pick up
+                // defaults but the original is preserved on disk.
+                let stamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0);
+                let backup = path.with_extension(format!("toml.broken-{stamp}"));
+                if let Err(rename_err) = fs::rename(&path, &backup) {
+                    eprintln!(
+                        "Warning: could not back up corrupt config to {}: {rename_err}",
+                        backup.display()
+                    );
+                } else {
+                    eprintln!(
+                        "Note: corrupt config backed up to {}",
+                        backup.display()
+                    );
+                }
+                return Err(format!("Could not parse config: {e}"));
+            }
+        };
         config.sanitize();
         Ok(config)
     }
@@ -177,6 +212,25 @@ impl Config {
         if !(64..=16384).contains(&self.max_tokens) {
             self.max_tokens = 2048;
         }
+        if let Some(v) = self.top_p {
+            if !v.is_finite() || !(0.0..=1.0).contains(&v) {
+                self.top_p = None;
+            }
+        }
+        if let Some(v) = self.frequency_penalty {
+            if !v.is_finite() || !(-2.0..=2.0).contains(&v) {
+                self.frequency_penalty = None;
+            }
+        }
+        if let Some(v) = self.presence_penalty {
+            if !v.is_finite() || !(-2.0..=2.0).contains(&v) {
+                self.presence_penalty = None;
+            }
+        }
+        // Drop empty stop sequences and cap at 4 (OpenAI hard limit).
+        self.stop_sequences
+            .retain(|s| !s.is_empty() && s.len() <= 256);
+        self.stop_sequences.truncate(4);
         if self.saved_endpoints.is_empty() {
             self.saved_endpoints = vec![Endpoint::new(self.default_endpoint.clone())];
         }

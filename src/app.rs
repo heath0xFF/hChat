@@ -1,11 +1,20 @@
 use crate::api::{self, ChatParams, StreamEvent, Usage};
+use crate::commands::{self, Command, ParseResult};
 use crate::config::{Config, Endpoint};
+use crate::markdown::{self, Segment};
 use crate::message::{Message, Role};
 use crate::storage::Storage;
 use eframe::egui;
 use egui_commonmark::{CommonMarkCache, CommonMarkViewer};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
+
+const STARTER_PROMPTS: &[(&str, &str)] = &[
+    ("✏️ Brainstorm", "Help me brainstorm ideas for "),
+    ("🐛 Debug", "Help me debug this issue:\n\n"),
+    ("📚 Explain", "Explain like I'm an experienced engineer: "),
+    ("🔧 Refactor", "Refactor this code for clarity:\n\n```\n\n```"),
+];
 
 pub struct ChatApp {
     messages: Vec<Message>,
@@ -53,6 +62,27 @@ pub struct ChatApp {
     rename_buffer: String,
     // Config
     config: Config,
+    // Sampling
+    top_p: Option<f32>,
+    frequency_penalty: Option<f32>,
+    presence_penalty: Option<f32>,
+    stop_sequences: Vec<String>,
+    // Find-in-conversation
+    show_find: bool,
+    find_query: String,
+    /// Last query we already scrolled the first match into view for. When this
+    /// matches `find_query`, suppress further `scroll_to_me` calls so the user
+    /// can scroll past the first match without being yanked back every frame.
+    last_scrolled_find_query: Option<String>,
+    // Token-estimate cache. Key is a cheap signature of (system + msgs + input);
+    // recompute only when it changes. Without this we re-encode the entire
+    // conversation through tiktoken every frame.
+    token_cache: Option<(u64, usize)>,
+    // Reasoning streaming state — true when we've emitted <think> for the
+    // current assistant message but haven't closed it yet.
+    reasoning_open: bool,
+    // Toast — short-lived feedback (e.g. unknown slash command).
+    toast: Option<(String, std::time::Instant)>,
 }
 
 impl ChatApp {
@@ -107,6 +137,16 @@ impl ChatApp {
             session_cost: 0.0,
             renaming_conversation: None,
             rename_buffer: String::new(),
+            top_p: config.top_p,
+            frequency_penalty: config.frequency_penalty,
+            presence_penalty: config.presence_penalty,
+            stop_sequences: config.stop_sequences.clone(),
+            show_find: false,
+            find_query: String::new(),
+            last_scrolled_find_query: None,
+            token_cache: None,
+            reasoning_open: false,
+            toast: None,
             config,
         };
 
@@ -114,18 +154,28 @@ impl ChatApp {
         app
     }
 
+    fn show_toast(&mut self, msg: impl Into<String>) {
+        self.toast = Some((msg.into(), std::time::Instant::now()));
+    }
+
     fn fetch_models(&mut self) {
-        if self.models_loading {
-            return; // fetch already in progress
-        }
+        // Always start a fresh fetch — replacing `models_rx` orphans any
+        // in-flight task's sender, so its result silently disappears (the
+        // dropped receiver causes `tx.send` to return Err). This is what we
+        // want when the user switches endpoint mid-fetch: the old endpoint's
+        // result must not land as the new endpoint's model list.
         let base_url = self.base_url.clone();
         let api_key = self.current_api_key().map(|s| s.to_string());
         let (tx, rx) = mpsc::unbounded_channel();
 
+        let url_for_event = base_url.clone();
         self.runtime.spawn(async move {
             match api::fetch_models(&base_url, api_key.as_deref()).await {
                 Ok(models) => {
-                    let _ = tx.send(StreamEvent::ModelsLoaded(models));
+                    let _ = tx.send(StreamEvent::ModelsLoaded {
+                        url: url_for_event,
+                        models,
+                    });
                 }
                 Err(e) => {
                     let _ = tx.send(StreamEvent::Error(e));
@@ -162,6 +212,12 @@ impl ChatApp {
         self.error = None;
         self.last_usage = None;
         self.session_cost = 0.0;
+        // Critical: clear edit state. Otherwise Ctrl+N during an in-progress
+        // edit leaves `editing_message = Some(N)` pointing into the new
+        // (smaller) conversation, and the Nth message of the next chat will
+        // render in edit mode with the prior chat's edit_buffer contents.
+        self.editing_message = None;
+        self.edit_buffer.clear();
     }
 
     fn save_current(&mut self) {
@@ -169,10 +225,8 @@ impl ChatApp {
             return;
         }
 
-        match self.current_conversation_id {
-            Some(id) => {
-                self.storage.save_messages(id, &self.messages);
-            }
+        let save_result: Result<(), String> = match self.current_conversation_id {
+            Some(id) => self.storage.save_messages(id, &self.messages),
             None => {
                 let title = self
                     .messages
@@ -195,11 +249,24 @@ impl ChatApp {
                     })
                     .unwrap_or_else(|| "New chat".to_string());
 
-                let id = self.storage.create_conversation(&title);
-                self.storage.save_messages(id, &self.messages);
-                self.current_conversation_id = Some(id);
+                match self.storage.create_conversation(&title) {
+                    Ok(id) => {
+                        let r = self.storage.save_messages(id, &self.messages);
+                        if r.is_ok() {
+                            self.current_conversation_id = Some(id);
+                        }
+                        r
+                    }
+                    Err(e) => Err(e),
+                }
             }
         };
+
+        if let Err(e) = save_result {
+            // Surface DB errors so the user knows their conversation didn't
+            // persist. Previously these were silently swallowed.
+            self.error = Some(format!("Save failed: {e}"));
+        }
 
         self.refresh_conversation_list();
     }
@@ -242,20 +309,90 @@ impl ChatApp {
     }
 
     fn send_message(&mut self) {
-        let content = self.input.trim().to_string();
-        if content.is_empty() || self.streaming || self.models.is_empty() {
+        let raw = self.input.trim().to_string();
+        if raw.is_empty() || self.streaming {
+            return;
+        }
+
+        // Slash commands intercept before model availability check, so /help
+        // and /clear work even when no models are loaded.
+        match commands::parse(&raw) {
+            ParseResult::Command(cmd) => {
+                self.input.clear();
+                self.error = None;
+                self.dispatch_command(cmd);
+                return;
+            }
+            ParseResult::Unknown(verb) => {
+                self.show_toast(format!("Unknown command: /{verb} — try /help"));
+                return;
+            }
+            ParseResult::BadArgs { verb: _, reason } => {
+                self.show_toast(reason);
+                return;
+            }
+            ParseResult::NotACommand => {}
+        }
+
+        if self.models.is_empty() {
+            self.error = Some("No models available".to_string());
             return;
         }
 
         self.input.clear();
         self.error = None;
 
-        self.messages.push(Message {
-            role: Role::User,
-            content,
-        });
-
+        self.messages.push(Message::new(Role::User, raw));
         self.start_streaming();
+    }
+
+    fn dispatch_command(&mut self, cmd: Command) {
+        match cmd {
+            Command::Model(needle) => {
+                let needle_lower = needle.to_ascii_lowercase();
+                let hit = self
+                    .models
+                    .iter()
+                    .position(|m| m.to_ascii_lowercase().contains(&needle_lower));
+                match hit {
+                    Some(i) => {
+                        self.selected_model = i;
+                        let name = self.models[i].clone();
+                        self.show_toast(format!("Model: {name}"));
+                    }
+                    None => self.show_toast(format!("No model matches '{needle}'")),
+                }
+            }
+            Command::Temperature(v) => {
+                let clamped = v.clamp(0.0, 2.0);
+                self.temperature = clamped;
+                self.show_toast(format!("Temperature: {clamped:.2}"));
+            }
+            Command::System(text) => {
+                self.system_prompt = text.clone();
+                let preview = if text.is_empty() {
+                    "(cleared)".to_string()
+                } else {
+                    truncate_chars(&text, 40)
+                };
+                self.show_toast(format!("System prompt: {preview}"));
+            }
+            Command::Clear => self.new_conversation(),
+            Command::Copy => {
+                if let Some(last) = self
+                    .messages
+                    .iter()
+                    .rev()
+                    .find(|m| m.role == Role::Assistant && !m.content.is_empty())
+                {
+                    self.copy_to_clipboard(&last.content);
+                    self.show_toast("Copied last reply");
+                } else {
+                    self.show_toast("No reply to copy yet");
+                }
+            }
+            Command::Help => self.show_toast(commands::help_text()),
+        }
     }
 
     fn start_streaming(&mut self) {
@@ -264,10 +401,9 @@ impl ChatApp {
             return;
         }
 
-        self.messages.push(Message {
-            role: Role::Assistant,
-            content: String::new(),
-        });
+        self.messages
+            .push(Message::new(Role::Assistant, String::new()));
+        self.reasoning_open = false;
 
         let (tx, rx) = mpsc::unbounded_channel();
         let cancel = CancellationToken::new();
@@ -283,10 +419,7 @@ impl ChatApp {
 
         let mut messages: Vec<Message> = Vec::new();
         if !self.system_prompt.trim().is_empty() {
-            messages.push(Message {
-                role: Role::System,
-                content: self.system_prompt.clone(),
-            });
+            messages.push(Message::new(Role::System, self.system_prompt.clone()));
         }
         // All messages except the empty assistant one we just added
         messages.extend_from_slice(&self.messages[..self.messages.len() - 1]);
@@ -300,12 +433,22 @@ impl ChatApp {
 
         let api_key = self.current_api_key().map(|s| s.to_string());
 
+        let stop = if self.stop_sequences.is_empty() {
+            None
+        } else {
+            Some(self.stop_sequences.clone())
+        };
+
         let params = ChatParams {
             base_url,
             model,
             messages,
             temperature,
             max_tokens,
+            top_p: self.top_p,
+            frequency_penalty: self.frequency_penalty,
+            presence_penalty: self.presence_penalty,
+            stop_sequences: stop,
             api_key,
         };
         self.runtime
@@ -366,13 +509,15 @@ impl ChatApp {
         if let Some(rx) = &mut self.models_rx {
             while let Ok(event) = rx.try_recv() {
                 match event {
-                    StreamEvent::ModelsLoaded(models) => {
-                        if !models.is_empty() {
-                            self.models = models;
-                            self.selected_model =
-                                self.selected_model.min(self.models.len().saturating_sub(1));
-                        }
+                    StreamEvent::ModelsLoaded { url, models }
+                        if !models.is_empty() && url == self.base_url =>
+                    {
+                        self.models = models;
+                        self.selected_model =
+                            self.selected_model.min(self.models.len().saturating_sub(1));
                     }
+                    // Result for an endpoint we're no longer on — silently drop.
+                    StreamEvent::ModelsLoaded { .. } => {}
                     StreamEvent::Done => {
                         self.models_loading = false;
                         self.models_rx = None;
@@ -395,10 +540,37 @@ impl ChatApp {
         if let Some(rx) = &mut self.rx {
             while let Ok(event) = rx.try_recv() {
                 match event {
-                    StreamEvent::Token(token) => {
+                    StreamEvent::Reasoning(text) => {
+                        // Empty deltas should never get here (api.rs filters
+                        // them) but if one slips through, drop it — it would
+                        // open a <think> with no body.
+                        if text.is_empty() {
+                            continue;
+                        }
                         if let Some(last) = self.messages.last_mut()
                             && last.role == Role::Assistant
                         {
+                            if !self.reasoning_open {
+                                last.content.push_str("<think>\n");
+                                self.reasoning_open = true;
+                            }
+                            last.content.push_str(&text);
+                        }
+                    }
+                    StreamEvent::Token(token) => {
+                        // Empty content tokens must not close a streaming
+                        // <think> block — see api.rs comment for the failure
+                        // mode this prevents.
+                        if token.is_empty() {
+                            continue;
+                        }
+                        if let Some(last) = self.messages.last_mut()
+                            && last.role == Role::Assistant
+                        {
+                            if self.reasoning_open {
+                                last.content.push_str("\n</think>\n\n");
+                                self.reasoning_open = false;
+                            }
                             last.content.push_str(&token);
                         }
                     }
@@ -409,6 +581,16 @@ impl ChatApp {
                         self.last_usage = Some(usage);
                     }
                     StreamEvent::Done => {
+                        // If reasoning was streaming and the provider never sent
+                        // a content delta, close the <think> tag explicitly so
+                        // the saved message has a balanced block.
+                        if self.reasoning_open
+                            && let Some(last) = self.messages.last_mut()
+                            && last.role == Role::Assistant
+                        {
+                            last.content.push_str("\n</think>\n");
+                        }
+                        self.reasoning_open = false;
                         just_finished_streaming = true;
                         self.streaming = false;
                         self.cancel_token = None;
@@ -417,6 +599,15 @@ impl ChatApp {
                     }
                     StreamEvent::Error(e) => {
                         self.error = Some(e);
+                        // Close any open reasoning block so the partial message
+                        // we keep doesn't render as "streaming…" forever.
+                        if self.reasoning_open
+                            && let Some(last) = self.messages.last_mut()
+                            && last.role == Role::Assistant
+                        {
+                            last.content.push_str("\n</think>\n");
+                        }
+                        self.reasoning_open = false;
                         self.streaming = false;
                         self.cancel_token = None;
                         self.rx = None;
@@ -426,6 +617,12 @@ impl ChatApp {
                         {
                             self.messages.pop();
                         }
+                        // Save the partial response. Without this, a stream
+                        // that errors out leaves an unsaved partial assistant
+                        // message in memory that gets bundled into the next
+                        // successful save — or lost entirely if the user
+                        // closes the app before another Done.
+                        just_finished_streaming = true;
                         break;
                     }
                     _ => {}
@@ -472,6 +669,10 @@ impl ChatApp {
         self.temperature = new_config.temperature;
         self.max_tokens = new_config.max_tokens;
         self.use_max_tokens = new_config.use_max_tokens;
+        self.top_p = new_config.top_p;
+        self.frequency_penalty = new_config.frequency_penalty;
+        self.presence_penalty = new_config.presence_penalty;
+        self.stop_sequences = new_config.stop_sequences.clone();
 
         // Capture old endpoint state for change detection
         let old_url = self.base_url.clone();
@@ -591,11 +792,33 @@ impl eframe::App for ChatApp {
             ctx.request_repaint();
         }
 
-        // Keyboard shortcuts
-        let new_chat =
-            ui.input(|i| i.key_pressed(egui::Key::N) && (i.modifiers.ctrl || i.modifiers.command));
+        // Keyboard shortcuts. Gated on `wants_keyboard_input` so they don't
+        // hijack typing into a focused TextEdit (system prompt, rename buffer,
+        // edit buffer, stop sequences). Tradeoff: to use Ctrl+F or Ctrl+N
+        // while a text field is focused, the user has to defocus first
+        // (Escape, or click elsewhere). Worth it to avoid surprising
+        // interrupts while editing.
+        let typing = ctx.egui_wants_keyboard_input();
+        let new_chat = !typing
+            && ui.input(|i| i.key_pressed(egui::Key::N) && (i.modifiers.ctrl || i.modifiers.command));
         if new_chat {
             self.new_conversation();
+        }
+        let toggle_find = !typing
+            && ui.input(|i| i.key_pressed(egui::Key::F) && (i.modifiers.ctrl || i.modifiers.command));
+        if toggle_find {
+            self.show_find = !self.show_find;
+            if !self.show_find {
+                self.find_query.clear();
+                self.last_scrolled_find_query = None;
+            }
+        }
+        // Escape closes find from anywhere — including from inside the find
+        // input itself, which is exactly where you want it to work.
+        if ui.input(|i| i.key_pressed(egui::Key::Escape)) && self.show_find {
+            self.show_find = false;
+            self.find_query.clear();
+            self.last_scrolled_find_query = None;
         }
 
         // Top bar
@@ -783,6 +1006,61 @@ impl eframe::App for ChatApp {
                     );
                 });
 
+                // Advanced sampling params (collapsed by default — most users don't need them).
+                egui::CollapsingHeader::new("Advanced sampling")
+                    .id_salt("advanced_sampling")
+                    .default_open(false)
+                    .show(ui, |ui| {
+                        // top_p (Option<f32>)
+                        ui.horizontal(|ui| {
+                            let mut enabled = self.top_p.is_some();
+                            if ui.checkbox(&mut enabled, "top_p:").changed() {
+                                self.top_p = if enabled { Some(1.0) } else { None };
+                            }
+                            if let Some(v) = self.top_p.as_mut() {
+                                ui.add(egui::Slider::new(v, 0.0..=1.0).step_by(0.05));
+                            }
+                        });
+                        ui.horizontal(|ui| {
+                            let mut enabled = self.frequency_penalty.is_some();
+                            if ui.checkbox(&mut enabled, "frequency_penalty:").changed() {
+                                self.frequency_penalty = if enabled { Some(0.0) } else { None };
+                            }
+                            if let Some(v) = self.frequency_penalty.as_mut() {
+                                ui.add(egui::Slider::new(v, -2.0..=2.0).step_by(0.1));
+                            }
+                        });
+                        ui.horizontal(|ui| {
+                            let mut enabled = self.presence_penalty.is_some();
+                            if ui.checkbox(&mut enabled, "presence_penalty:").changed() {
+                                self.presence_penalty = if enabled { Some(0.0) } else { None };
+                            }
+                            if let Some(v) = self.presence_penalty.as_mut() {
+                                ui.add(egui::Slider::new(v, -2.0..=2.0).step_by(0.1));
+                            }
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("Stop sequences (one per line, max 4):");
+                        });
+                        let mut joined = self.stop_sequences.join("\n");
+                        if ui
+                            .add(
+                                egui::TextEdit::multiline(&mut joined)
+                                    .hint_text("e.g.\\nUser:\\nAssistant:")
+                                    .desired_rows(2)
+                                    .desired_width(f32::INFINITY),
+                            )
+                            .changed()
+                        {
+                            self.stop_sequences = joined
+                                .lines()
+                                .map(|s| s.to_string())
+                                .filter(|s| !s.is_empty())
+                                .take(4)
+                                .collect();
+                        }
+                    });
+
                 ui.separator();
                 let mut fonts_changed = false;
                 ui.horizontal(|ui| {
@@ -840,6 +1118,10 @@ impl eframe::App for ChatApp {
                         self.config.max_tokens = self.max_tokens;
                         self.config.use_max_tokens = self.use_max_tokens;
                         self.config.saved_endpoints = self.saved_endpoints.clone();
+                        self.config.top_p = self.top_p;
+                        self.config.frequency_penalty = self.frequency_penalty;
+                        self.config.presence_penalty = self.presence_penalty;
+                        self.config.stop_sequences = self.stop_sequences.clone();
                         if let Err(e) = self.config.save() {
                             self.error = Some(format!("Failed to save settings: {e}"));
                         }
@@ -856,6 +1138,10 @@ impl eframe::App for ChatApp {
                         self.max_tokens = self.config.max_tokens;
                         self.use_max_tokens = self.config.use_max_tokens;
                         self.saved_endpoints = self.config.saved_endpoints.clone();
+                        self.top_p = self.config.top_p;
+                        self.frequency_penalty = self.config.frequency_penalty;
+                        self.presence_penalty = self.config.presence_penalty;
+                        self.stop_sequences = self.config.stop_sequences.clone();
                         configure_fonts(&ctx, &self.config);
                         ctx.set_zoom_factor(self.config.ui_scale);
                         apply_theme(&ctx, self.config.dark_mode);
@@ -1160,10 +1446,24 @@ impl eframe::App for ChatApp {
                 }
             });
 
+            // Live token estimate. Cached on a cheap content signature so we
+            // don't re-encode the entire conversation through tiktoken every
+            // frame; only when something materially changed.
+            let signature = token_signature(&self.system_prompt, &self.messages, &self.input);
+            let approx_tokens = match self.token_cache {
+                Some((sig, count)) if sig == signature => count,
+                _ => {
+                    let count = estimate_tokens(&self.system_prompt, &self.messages, &self.input);
+                    self.token_cache = Some((signature, count));
+                    count
+                }
+            };
+
             ui.horizontal(|ui| {
                 if self.streaming {
                     ui.spinner();
                 }
+                ui.weak(format!("~{approx_tokens} tokens"));
                 if let Some(usage) = &self.last_usage {
                     let parts: Vec<String> = [
                         usage.prompt_tokens.map(|t| format!("prompt: {t}")),
@@ -1184,20 +1484,78 @@ impl eframe::App for ChatApp {
 
         // Central message area
         let panel_fill = ui.visuals().panel_fill;
+        let mut prefill_input: Option<String> = None;
         egui::Frame::new()
             .fill(panel_fill)
             .inner_margin(egui::Margin::symmetric(16, 0))
             .show(ui, |ui| {
+                // Find bar (Ctrl+F)
+                // Compute find matches once per frame: lowercased query,
+                // per-message bool, first-match index. Reused by both the count
+                // display and the message render loop.
+                let find_q_lower: Option<String> = if self.show_find && !self.find_query.is_empty()
+                {
+                    Some(self.find_query.to_ascii_lowercase())
+                } else {
+                    None
+                };
+                let match_flags: Vec<bool> = match find_q_lower.as_deref() {
+                    Some(q) => self
+                        .messages
+                        .iter()
+                        .map(|m| m.content.to_ascii_lowercase().contains(q))
+                        .collect(),
+                    None => Vec::new(),
+                };
+                let first_match_idx: Option<usize> = match_flags.iter().position(|&b| b);
+
+                if self.show_find {
+                    ui.horizontal(|ui| {
+                        ui.label("🔍");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.find_query)
+                                .hint_text("Find in conversation…")
+                                .desired_width(400.0),
+                        );
+                        if !self.find_query.is_empty() {
+                            let matches = match_flags.iter().filter(|&&b| b).count();
+                            ui.weak(format!(
+                                "{matches} match{}",
+                                if matches == 1 { "" } else { "es" }
+                            ));
+                        }
+                        if ui.small_button("✕").clicked() {
+                            self.show_find = false;
+                            self.find_query.clear();
+                            self.last_scrolled_find_query = None;
+                        }
+                    });
+                    ui.separator();
+                }
+
                 egui::ScrollArea::vertical()
                     .auto_shrink([false; 2])
                     .stick_to_bottom(true)
                     .show(ui, |ui| {
                         if self.messages.is_empty() {
                             ui.vertical_centered(|ui| {
-                                ui.add_space(100.0);
+                                ui.add_space(60.0);
                                 ui.heading("hChat");
                                 ui.label("Lightweight local LLM chat");
-                                ui.label("Ctrl+N to start a new conversation");
+                                ui.add_space(20.0);
+                                ui.weak("Try one of these to get started:");
+                                ui.add_space(8.0);
+                                for (label, prompt) in STARTER_PROMPTS {
+                                    if ui
+                                        .button(*label)
+                                        .on_hover_text(*prompt)
+                                        .clicked()
+                                    {
+                                        prefill_input = Some((*prompt).to_string());
+                                    }
+                                }
+                                ui.add_space(20.0);
+                                ui.weak("Ctrl+N for new chat · Ctrl+F to find · /help for commands");
                             });
                             return;
                         }
@@ -1205,67 +1563,135 @@ impl eframe::App for ChatApp {
                         let mut action: Option<MessageAction> = None;
                         let msg_count = self.messages.len();
 
-                        for (i, msg) in self.messages.iter().enumerate() {
-                            let (prefix, color) = match msg.role {
+                        // If we issue a scroll_to_me this frame, store the query
+                        // here so subsequent frames know not to fire it again.
+                        let mut pending_scroll_query: Option<String> = None;
+
+                        // Snapshot fields the inner closure-free loop needs without
+                        // re-borrowing self.
+                        let editing_message = self.editing_message;
+                        let streaming = self.streaming;
+                        let highlight_fill =
+                            ui.visuals().selection.bg_fill.linear_multiply(0.25);
+
+                        // We iterate by index to avoid holding a borrow on self.messages
+                        // across the body, which needs &mut self for commonmark_cache.
+                        for i in 0..msg_count {
+                            let (role, content_clone, created_at);
+                            {
+                                let msg = &self.messages[i];
+                                role = msg.role.clone();
+                                content_clone = msg.content.clone();
+                                created_at = msg.created_at;
+                            }
+                            let (prefix, color) = match role {
                                 Role::User => ("You", egui::Color32::from_rgb(100, 180, 255)),
                                 Role::Assistant => ("AI", egui::Color32::from_rgb(100, 255, 150)),
                                 Role::System => ("System", egui::Color32::GRAY),
                             };
 
-                            ui.horizontal(|ui| {
-                                ui.colored_label(color, format!("{prefix}:"));
-                                ui.with_layout(
-                                    egui::Layout::right_to_left(egui::Align::Center),
-                                    |ui| {
-                                        if ui.small_button("📋").on_hover_text("Copy").clicked() {
-                                            action = Some(MessageAction::Copy(i));
-                                        }
-                                        if msg.role == Role::User
-                                            && !self.streaming
-                                            && ui.small_button("✏").on_hover_text("Edit").clicked()
-                                        {
-                                            action = Some(MessageAction::StartEdit(i));
-                                        }
-                                        if msg.role == Role::Assistant
-                                            && i == msg_count - 1
-                                            && !self.streaming
-                                            && ui
-                                                .small_button("🔄")
-                                                .on_hover_text("Regenerate")
-                                                .clicked()
-                                        {
-                                            action = Some(MessageAction::Regenerate);
-                                        }
-                                    },
-                                );
-                            });
+                            let matches_find = match_flags.get(i).copied().unwrap_or(false);
 
-                            if self.editing_message == Some(i) {
-                                ui.add(
-                                    egui::TextEdit::multiline(&mut self.edit_buffer)
-                                        .desired_width(f32::INFINITY)
-                                        .desired_rows(3),
-                                );
+                            let render_inner = |ui: &mut egui::Ui,
+                                                    cache: &mut CommonMarkCache,
+                                                    edit_buffer: &mut String|
+                             -> Option<MessageAction> {
+                                let mut act: Option<MessageAction> = None;
                                 ui.horizontal(|ui| {
-                                    if ui.button("Send").clicked() {
-                                        action = Some(MessageAction::FinishEdit(i));
+                                    let role_resp = ui.colored_label(color, format!("{prefix}:"));
+                                    if let Some(ts) = created_at {
+                                        role_resp.on_hover_text(format_timestamp(ts));
                                     }
-                                    if ui.button("Cancel").clicked() {
-                                        action = Some(MessageAction::CancelEdit);
-                                    }
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            if ui.small_button("📋").on_hover_text("Copy").clicked() {
+                                                act = Some(MessageAction::Copy(i));
+                                            }
+                                            if role == Role::User
+                                                && !streaming
+                                                && ui.small_button("✏").on_hover_text("Edit").clicked()
+                                            {
+                                                act = Some(MessageAction::StartEdit(i));
+                                            }
+                                            if role == Role::Assistant
+                                                && i == msg_count - 1
+                                                && !streaming
+                                                && ui
+                                                    .small_button("🔄")
+                                                    .on_hover_text("Regenerate")
+                                                    .clicked()
+                                            {
+                                                act = Some(MessageAction::Regenerate);
+                                            }
+                                        },
+                                    );
                                 });
-                            } else if msg.role == Role::Assistant && !msg.content.is_empty() {
-                                CommonMarkViewer::new().show(
+
+                                if editing_message == Some(i) {
+                                    ui.add(
+                                        egui::TextEdit::multiline(edit_buffer)
+                                            .desired_width(f32::INFINITY)
+                                            .desired_rows(3),
+                                    );
+                                    ui.horizontal(|ui| {
+                                        if ui.button("Send").clicked() {
+                                            act = Some(MessageAction::FinishEdit(i));
+                                        }
+                                        if ui.button("Cancel").clicked() {
+                                            act = Some(MessageAction::CancelEdit);
+                                        }
+                                    });
+                                } else if role == Role::Assistant && !content_clone.is_empty() {
+                                    render_assistant_message(ui, cache, i, &content_clone);
+                                } else {
+                                    ui.label(&content_clone);
+                                }
+                                act
+                            };
+
+                            let act_for_msg = if matches_find {
+                                let inner_resp = egui::Frame::new()
+                                    .fill(highlight_fill)
+                                    .inner_margin(egui::Margin::same(4))
+                                    .corner_radius(4.0)
+                                    .show(ui, |ui| {
+                                        render_inner(
+                                            ui,
+                                            &mut self.commonmark_cache,
+                                            &mut self.edit_buffer,
+                                        )
+                                    });
+                                // Only scroll once per query — repeated calls
+                                // every frame would prevent the user from
+                                // scrolling past the first match.
+                                let already_scrolled = self
+                                    .last_scrolled_find_query
+                                    .as_deref()
+                                    == Some(self.find_query.as_str());
+                                if Some(i) == first_match_idx && !already_scrolled {
+                                    inner_resp.response.scroll_to_me(Some(egui::Align::Center));
+                                    pending_scroll_query = Some(self.find_query.clone());
+                                }
+                                inner_resp.inner
+                            } else {
+                                render_inner(
                                     ui,
                                     &mut self.commonmark_cache,
-                                    &msg.content,
-                                );
-                            } else {
-                                ui.label(&msg.content);
+                                    &mut self.edit_buffer,
+                                )
+                            };
+
+                            if act_for_msg.is_some() {
+                                action = act_for_msg;
                             }
 
                             ui.add_space(8.0);
                             ui.separator();
+                        }
+
+                        if let Some(q) = pending_scroll_query {
+                            self.last_scrolled_find_query = Some(q);
                         }
 
                         match action {
@@ -1290,6 +1716,35 @@ impl eframe::App for ChatApp {
                         }
                     });
             });
+
+        if let Some(p) = prefill_input {
+            self.input = p;
+        }
+
+        // Toast (auto-dismisses after 3.5s)
+        let toast_expired = self
+            .toast
+            .as_ref()
+            .map(|(_, started)| started.elapsed() >= std::time::Duration::from_millis(3500))
+            .unwrap_or(false);
+        if toast_expired {
+            self.toast = None;
+        }
+        if let Some((msg, _)) = self.toast.as_ref() {
+            egui::Area::new(egui::Id::new("hchat_toast"))
+                .anchor(egui::Align2::RIGHT_BOTTOM, egui::vec2(-16.0, -16.0))
+                .show(&ctx, |ui| {
+                    egui::Frame::popup(ui.style())
+                        .inner_margin(egui::Margin::symmetric(12, 8))
+                        .show(ui, |ui| {
+                            // Cap width so a multi-line toast (like /help) stays
+                            // narrow rather than stretching across the screen.
+                            ui.set_max_width(360.0);
+                            ui.label(msg);
+                        });
+                });
+            ctx.request_repaint_after(std::time::Duration::from_millis(200));
+        }
     }
 }
 
@@ -1307,4 +1762,187 @@ enum SidebarAction {
     Export(i64),
     StartRename(i64),
     FinishRename(i64),
+}
+
+/// Cheap content signature for the token-estimate cache. Combines lengths and
+/// a tail hash of each message; collisions only matter as missed updates and
+/// any meaningful content change flips at least one byte at the tail.
+fn token_signature(system: &str, messages: &[Message], pending: &str) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    system.len().hash(&mut h);
+    pending.len().hash(&mut h);
+    pending.hash(&mut h);
+    messages.len().hash(&mut h);
+    for m in messages {
+        m.content.len().hash(&mut h);
+        // Hash a small fingerprint of each message — full content hash would
+        // be slower than just re-tokenizing, defeating the cache.
+        let bytes = m.content.as_bytes();
+        if !bytes.is_empty() {
+            bytes[bytes.len() - 1].hash(&mut h);
+            if bytes.len() >= 16 {
+                bytes[bytes.len() - 16].hash(&mut h);
+            }
+        }
+    }
+    h.finish()
+}
+
+/// Token estimate using `cl100k_base` (the GPT-4 / GPT-3.5 tokenizer). It's an
+/// approximation for non-OpenAI models (Claude, Llama, etc.) but the right
+/// order of magnitude — accurate enough to drive a budget bar.
+///
+/// Concatenation order matches what we'd actually send: system prompt → each
+/// message → pending input. We don't add per-message framing overhead the API
+/// adds (ChatML tokens etc.), so the real prompt tokens will be a few percent
+/// higher than this estimate.
+fn estimate_tokens(system: &str, messages: &[Message], pending: &str) -> usize {
+    let mut full = String::with_capacity(
+        system.len()
+            + pending.len()
+            + messages.iter().map(|m| m.content.len() + 1).sum::<usize>(),
+    );
+    if !system.is_empty() {
+        full.push_str(system);
+        full.push('\n');
+    }
+    for m in messages {
+        full.push_str(&m.content);
+        full.push('\n');
+    }
+    full.push_str(pending);
+
+    let bpe = tiktoken_rs::cl100k_base_singleton();
+    bpe.encode_with_special_tokens(&full).len()
+}
+
+/// Truncate a string to at most `max_chars` characters and append `…`. Returns
+/// the original string if it's already short enough. Char-aware so we never
+/// slice through a multi-byte UTF-8 boundary.
+fn truncate_chars(s: &str, max_chars: usize) -> String {
+    if s.chars().count() <= max_chars {
+        s.to_string()
+    } else {
+        let mut out: String = s.chars().take(max_chars).collect();
+        out.push('…');
+        out
+    }
+}
+
+/// Format a Unix-millis timestamp as `HH:MM:SS UTC`. Local-timezone formatting
+/// would need chrono or similar; for Phase 1 hover tooltips, UTC is honest and
+/// sufficient. Phase 2's schema migration adds proper persisted timestamps and
+/// can move to localized formatting then.
+fn format_timestamp(ms: i64) -> String {
+    let secs = ms / 1000;
+    let h = (secs / 3600) % 24;
+    let m = (secs / 60) % 60;
+    let s = secs % 60;
+    format!("{h:02}:{m:02}:{s:02} UTC")
+}
+
+/// Render an assistant message: walk the segment list, rendering prose with
+/// `egui_commonmark` and code/reasoning blocks ourselves.
+fn render_assistant_message(
+    ui: &mut egui::Ui,
+    cache: &mut CommonMarkCache,
+    msg_idx: usize,
+    content: &str,
+) {
+    for (block_idx, seg) in markdown::segments(content).into_iter().enumerate() {
+        match seg {
+            Segment::Markdown(text) => {
+                CommonMarkViewer::new().show(ui, cache, text);
+            }
+            Segment::Code { lang, body } => {
+                // Each code block gets its own id scope so two blocks with
+                // identical bodies don't collide on auto-generated widget ids.
+                ui.push_id(("code", msg_idx, block_idx), |ui| {
+                    render_code_block(ui, lang, body);
+                });
+            }
+            Segment::Reasoning { body, closed } => {
+                render_reasoning_block(ui, msg_idx, block_idx, body, closed);
+            }
+        }
+    }
+}
+
+fn render_code_block(ui: &mut egui::Ui, lang: &str, body: &str) {
+    let visuals = ui.visuals();
+    let bg = visuals.code_bg_color;
+    let stroke_color = visuals.weak_text_color();
+
+    egui::Frame::new()
+        .fill(bg)
+        .stroke(egui::Stroke::new(1.0, stroke_color))
+        .inner_margin(egui::Margin::same(8))
+        .corner_radius(4.0)
+        .show(ui, |ui| {
+            // Header strip: language pill (left) + copy button (right).
+            ui.horizontal(|ui| {
+                if !lang.is_empty() {
+                    ui.label(
+                        egui::RichText::new(lang)
+                            .small()
+                            .color(ui.visuals().weak_text_color())
+                            .monospace(),
+                    );
+                }
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui
+                        .small_button("📋")
+                        .on_hover_text("Copy code")
+                        .clicked()
+                        && let Ok(mut cb) = arboard::Clipboard::new()
+                    {
+                        let _ = cb.set_text(body);
+                    }
+                });
+            });
+            // Use a selectable Label rather than a non-interactive TextEdit so
+            // users can drag-select a snippet for partial copy. Label respects
+            // newlines, so the visual layout of code is preserved.
+            ui.add(
+                egui::Label::new(egui::RichText::new(body).monospace())
+                    .selectable(true)
+                    .wrap_mode(egui::TextWrapMode::Extend),
+            );
+        });
+}
+
+fn render_reasoning_block(
+    ui: &mut egui::Ui,
+    msg_idx: usize,
+    block_idx: usize,
+    body: &str,
+    closed: bool,
+) {
+    let label = if closed {
+        "💭 Reasoning"
+    } else {
+        "💭 Reasoning (streaming…)"
+    };
+
+    // Include `closed` in the id salt so the CollapsingHeader's persisted
+    // open/closed state resets when the block transitions from streaming to
+    // finished — that lets `default_open(!closed)` actually apply on the
+    // transition (egui only honors `default_open` for unseen ids). Trade-off:
+    // if the user manually expanded it while streaming, that gets reset on
+    // close — which is the behavior we want anyway (auto-collapse when done).
+    egui::CollapsingHeader::new(
+        egui::RichText::new(label)
+            .small()
+            .color(ui.visuals().weak_text_color()),
+    )
+    .id_salt(("reasoning", msg_idx, block_idx, closed))
+    .default_open(!closed)
+    .show(ui, |ui| {
+        ui.label(
+            egui::RichText::new(body)
+                .small()
+                .color(ui.visuals().weak_text_color()),
+        );
+    });
 }

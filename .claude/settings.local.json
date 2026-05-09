@@ -10,7 +10,12 @@
       "Read(//usr/local/bin/**)",
       "Bash(command -v rustc)",
       "Read(//opt/homebrew/bin/**)",
-      "Read(//Users/heath/**)"
+      "Read(//Users/heath/**)",
+      "Bash(cargo build *)",
+      "Bash(cargo clippy *)",
+      "Bash(cargo test *)",
+      "Bash(git diff *)",
+      "Read(//tmp/**)"
     ]
   }
 }
