@@ -2,8 +2,8 @@ use crate::api::{self, ChatParams, StreamEvent, Usage};
 use crate::commands::{self, Command, ParseResult};
 use crate::config::{Config, Endpoint};
 use crate::markdown::{self, Segment};
-use crate::message::{Message, Role};
-use crate::storage::Storage;
+use crate::message::{ContentPart, ImageUrl, Message, Role};
+use crate::storage::{ConversationSettings, Preset, Storage};
 use eframe::egui;
 use egui_commonmark::{CommonMarkCache, CommonMarkViewer};
 use tokio::sync::mpsc;
@@ -39,10 +39,34 @@ pub struct ChatApp {
     editing_message: Option<usize>,
     edit_buffer: String,
     show_settings: bool,
+    // Presets — saved settings bundles. Cache is loaded lazily.
+    show_presets: bool,
+    new_preset_name: String,
+    presets_cache: Vec<Preset>,
     // Persistence
     storage: Storage,
     current_conversation_id: Option<i64>,
-    conversation_list: Vec<(i64, String)>,
+    /// (id, title, pinned). Pinned conversations sort to the top.
+    conversation_list: Vec<(i64, String, bool)>,
+    /// Hash of the live settings that we last persisted to the current conv.
+    /// When the live hash differs, we know to flush per-conv settings.
+    settings_signature: u64,
+    /// When loading a conversation whose endpoint differs from the current one,
+    /// we switch the endpoint and re-fetch models. The conv's stored model name
+    /// goes here so we can restore it once the new model list arrives.
+    pending_model_after_models_load: Option<String>,
+    /// Channel for one-shot auto-title responses. The payload is
+    /// `(conversation_id, Result<title, error>)` — the conv id is on the
+    /// payload (not pulled from `current_conversation_id`) so a switch in
+    /// the meantime doesn't cross-contaminate titles.
+    title_rx: Option<mpsc::UnboundedReceiver<(i64, Result<String, String>)>>,
+    // Draft persistence — debounce input changes and write to the conv row
+    // 500ms after the user stops typing. `last_seen_input` detects per-frame
+    // edits; `persisted_draft` is what we last wrote (so we skip a write
+    // when nothing's actually changed since the last persist).
+    last_seen_input: String,
+    persisted_draft: String,
+    draft_dirty_since: Option<std::time::Instant>,
     show_sidebar: bool,
     show_context_sidebar: bool,
     // Search
@@ -83,6 +107,10 @@ pub struct ChatApp {
     reasoning_open: bool,
     // Toast — short-lived feedback (e.g. unknown slash command).
     toast: Option<(String, std::time::Instant)>,
+    /// Image attachments staged for the next sent message. Each entry is
+    /// `(display_name, ContentPart::ImageUrl)`. Cleared after send_message
+    /// builds the user message.
+    pending_attachments: Vec<(String, ContentPart)>,
 }
 
 impl ChatApp {
@@ -96,7 +124,7 @@ impl ChatApp {
         let conversation_list = storage
             .list_conversations()
             .into_iter()
-            .map(|c| (c.id, c.title))
+            .map(|c| (c.id, c.title, c.pinned))
             .collect();
 
         let mut app = Self {
@@ -121,9 +149,18 @@ impl ChatApp {
             editing_message: None,
             edit_buffer: String::new(),
             show_settings: false,
+            show_presets: false,
+            new_preset_name: String::new(),
+            presets_cache: Vec::new(),
             storage,
             current_conversation_id: None,
             conversation_list,
+            settings_signature: 0,
+            pending_model_after_models_load: None,
+            title_rx: None,
+            last_seen_input: String::new(),
+            persisted_draft: String::new(),
+            draft_dirty_since: None,
             show_sidebar: true,
             show_context_sidebar: true,
             search_query: String::new(),
@@ -147,6 +184,7 @@ impl ChatApp {
             token_cache: None,
             reasoning_open: false,
             toast: None,
+            pending_attachments: Vec::new(),
             config,
         };
 
@@ -212,12 +250,19 @@ impl ChatApp {
         self.error = None;
         self.last_usage = None;
         self.session_cost = 0.0;
+        self.input.clear();
         // Critical: clear edit state. Otherwise Ctrl+N during an in-progress
         // edit leaves `editing_message = Some(N)` pointing into the new
         // (smaller) conversation, and the Nth message of the next chat will
         // render in edit mode with the prior chat's edit_buffer contents.
         self.editing_message = None;
         self.edit_buffer.clear();
+        // Reset draft tracking — there's no conv to persist into yet.
+        self.last_seen_input.clear();
+        self.persisted_draft.clear();
+        self.draft_dirty_since = None;
+        self.pending_attachments.clear();
+        self.reset_settings_to_defaults();
     }
 
     fn save_current(&mut self) {
@@ -233,7 +278,8 @@ impl ChatApp {
                     .iter()
                     .find(|m| m.role == Role::User)
                     .map(|m| {
-                        let t = m.content.trim();
+                        let s = m.text_str();
+                        let t = s.trim();
                         if t.len() > 50 {
                             // Find a char boundary for truncation
                             let end = t
@@ -254,6 +300,11 @@ impl ChatApp {
                         let r = self.storage.save_messages(id, &self.messages);
                         if r.is_ok() {
                             self.current_conversation_id = Some(id);
+                            // Persist the live settings as the conv's initial
+                            // snapshot so reloading later restores them.
+                            let snap = self.current_settings_snapshot();
+                            self.storage.save_conversation_settings(id, &snap);
+                            self.settings_signature = settings_signature(&snap);
                         }
                         r
                     }
@@ -266,6 +317,20 @@ impl ChatApp {
             // Surface DB errors so the user knows their conversation didn't
             // persist. Previously these were silently swallowed.
             self.error = Some(format!("Save failed: {e}"));
+        }
+
+        // Auto-title trigger: only fire once per conversation. Requires at
+        // least one user + one non-empty assistant message in scope (the
+        // initial save from the very first send_message would have only the
+        // user message — that path doesn't generate a title).
+        if let Some(id) = self.current_conversation_id
+            && self.storage.needs_auto_title(id)
+            && self
+                .messages
+                .iter()
+                .any(|m| m.role == Role::Assistant && !m.is_empty_content())
+        {
+            self.request_auto_title(id);
         }
 
         self.refresh_conversation_list();
@@ -283,6 +348,14 @@ impl ChatApp {
         self.session_cost = 0.0;
         self.editing_message = None;
         self.edit_buffer.clear();
+        let stored = self.storage.load_conversation_settings(id);
+        self.apply_settings(stored);
+        self.input = self.storage.load_draft(id).unwrap_or_default();
+        // Seed the draft tracker so we don't immediately re-persist what we
+        // just loaded.
+        self.last_seen_input = self.input.clone();
+        self.persisted_draft = self.input.clone();
+        self.draft_dirty_since = None;
     }
 
     fn delete_conversation(&mut self, id: i64) {
@@ -304,34 +377,401 @@ impl ChatApp {
             .storage
             .list_conversations()
             .into_iter()
-            .map(|c| (c.id, c.title))
+            .map(|c| (c.id, c.title, c.pinned))
             .collect();
+    }
+
+    /// Snapshot the live per-conversation state into a `ConversationSettings`.
+    /// `model` is the currently selected model name (looked up via the index).
+    fn current_settings_snapshot(&self) -> ConversationSettings {
+        ConversationSettings {
+            model: self.models.get(self.selected_model).cloned(),
+            system_prompt: if self.system_prompt.is_empty() {
+                None
+            } else {
+                Some(self.system_prompt.clone())
+            },
+            temperature: Some(self.temperature),
+            max_tokens: Some(self.max_tokens),
+            use_max_tokens: self.use_max_tokens,
+            top_p: self.top_p,
+            frequency_penalty: self.frequency_penalty,
+            presence_penalty: self.presence_penalty,
+            stop_sequences: self.stop_sequences.clone(),
+            endpoint: Some(self.base_url.clone()),
+        }
+    }
+
+    /// Load a `ConversationSettings` into the live fields. `None` fields fall
+    /// back to the global config defaults so a conv created before a setting
+    /// existed picks up sensible values.
+    fn apply_settings(&mut self, s: ConversationSettings) {
+        // If the conv stored a different endpoint, switch to it and queue
+        // model fetch. Subsequent ModelsLoaded restores the model selection
+        // by name via `pending_model_after_models_load`.
+        if let Some(ep) = s.endpoint
+            && ep != self.base_url
+        {
+            self.base_url = ep;
+            self.fetch_models();
+        }
+
+        if let Some(name) = s.model {
+            if let Some(idx) = self.models.iter().position(|m| m == &name) {
+                self.selected_model = idx;
+            } else {
+                // Models not loaded yet (or this model isn't currently
+                // available). Stash for later.
+                self.pending_model_after_models_load = Some(name);
+            }
+        }
+
+        self.system_prompt = s.system_prompt.unwrap_or_else(|| self.config.system_prompt.clone());
+        self.temperature = s.temperature.unwrap_or(self.config.temperature);
+        self.max_tokens = s.max_tokens.unwrap_or(self.config.max_tokens);
+        self.use_max_tokens = s.use_max_tokens;
+        self.top_p = s.top_p.or(self.config.top_p);
+        self.frequency_penalty = s.frequency_penalty.or(self.config.frequency_penalty);
+        self.presence_penalty = s.presence_penalty.or(self.config.presence_penalty);
+        self.stop_sequences = if s.stop_sequences.is_empty() {
+            self.config.stop_sequences.clone()
+        } else {
+            s.stop_sequences
+        };
+        // Mark settings as freshly loaded so the dirty-check below doesn't
+        // immediately re-save what we just read.
+        self.settings_signature = settings_signature(&self.current_settings_snapshot());
+    }
+
+    /// Reset the live settings to the global config defaults. Called when
+    /// starting a brand-new conversation.
+    fn reset_settings_to_defaults(&mut self) {
+        self.system_prompt = self.config.system_prompt.clone();
+        self.temperature = self.config.temperature;
+        self.max_tokens = self.config.max_tokens;
+        self.use_max_tokens = self.config.use_max_tokens;
+        self.top_p = self.config.top_p;
+        self.frequency_penalty = self.config.frequency_penalty;
+        self.presence_penalty = self.config.presence_penalty;
+        self.stop_sequences = self.config.stop_sequences.clone();
+        self.settings_signature = settings_signature(&self.current_settings_snapshot());
+    }
+
+    /// Persist the live settings to the current conversation row if they've
+    /// changed since the last persist. Cheap to call every frame: the hash
+    /// compare short-circuits when nothing's moved.
+    fn persist_settings_if_dirty(&mut self) {
+        let Some(id) = self.current_conversation_id else {
+            return;
+        };
+        let snap = self.current_settings_snapshot();
+        let sig = settings_signature(&snap);
+        if sig != self.settings_signature {
+            self.storage.save_conversation_settings(id, &snap);
+            self.settings_signature = sig;
+        }
+    }
+
+    /// Process files dropped onto the window. Image files are encoded as
+    /// base64 data URLs and staged for the next message; text files are
+    /// inlined into the input as fenced code. Anything else gets a toast.
+    fn handle_dropped_files(&mut self, files: Vec<egui::DroppedFile>) {
+        const MAX_TEXT_BYTES: usize = 256 * 1024;
+        const MAX_IMAGE_BYTES: usize = 8 * 1024 * 1024;
+        for f in files {
+            // egui delivers either a path (native) or in-memory bytes (web).
+            // We only target native, but handle both shapes defensively.
+            let (name, bytes): (String, Vec<u8>) = if let Some(path) = &f.path {
+                let n = path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| path.to_string_lossy().to_string());
+                match std::fs::read(path) {
+                    Ok(b) => (n, b),
+                    Err(e) => {
+                        self.show_toast(format!("Failed to read {n}: {e}"));
+                        continue;
+                    }
+                }
+            } else if !f.bytes.as_ref().map(|b| b.is_empty()).unwrap_or(true) {
+                let n = if f.name.is_empty() {
+                    "dropped".to_string()
+                } else {
+                    f.name.clone()
+                };
+                let b = f.bytes.as_ref().map(|b| b.to_vec()).unwrap_or_default();
+                (n, b)
+            } else {
+                continue;
+            };
+
+            let lower = name.to_ascii_lowercase();
+            let ext = std::path::Path::new(&lower)
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("");
+
+            if let Some(mime) = image_mime_for_ext(ext) {
+                if bytes.len() > MAX_IMAGE_BYTES {
+                    self.show_toast(format!(
+                        "{name}: image larger than {} MB — skipped",
+                        MAX_IMAGE_BYTES / (1024 * 1024)
+                    ));
+                    continue;
+                }
+                use base64::Engine as _;
+                let encoded = base64::engine::general_purpose::STANDARD.encode(&bytes);
+                let data_url = format!("data:{mime};base64,{encoded}");
+                self.pending_attachments.push((
+                    name,
+                    ContentPart::ImageUrl {
+                        image_url: ImageUrl {
+                            url: data_url,
+                            detail: None,
+                        },
+                    },
+                ));
+            } else if is_text_extension(ext) {
+                if bytes.len() > MAX_TEXT_BYTES {
+                    self.show_toast(format!(
+                        "{name}: text larger than {} KB — skipped",
+                        MAX_TEXT_BYTES / 1024
+                    ));
+                    continue;
+                }
+                let text = match String::from_utf8(bytes) {
+                    Ok(t) => t,
+                    Err(_) => {
+                        self.show_toast(format!("{name}: not valid UTF-8 — skipped"));
+                        continue;
+                    }
+                };
+                let lang = lang_for_ext(ext);
+                if !self.input.is_empty() && !self.input.ends_with('\n') {
+                    self.input.push('\n');
+                }
+                self.input
+                    .push_str(&format!("```{lang}\n// {name}\n{text}\n```\n"));
+            } else {
+                self.show_toast(format!("{name}: unsupported file type"));
+            }
+        }
+    }
+
+    fn show_presets_panel(&mut self, ui: &mut egui::Ui) {
+        ui.separator();
+        ui.label(egui::RichText::new("Presets").strong());
+        ui.add_space(4.0);
+
+        // Save current settings as a new preset.
+        ui.horizontal(|ui| {
+            ui.label("New preset:");
+            ui.add(
+                egui::TextEdit::singleline(&mut self.new_preset_name)
+                    .hint_text("Preset name")
+                    .desired_width(200.0),
+            );
+            let can_save = !self.new_preset_name.trim().is_empty();
+            if ui
+                .add_enabled(can_save, egui::Button::new("Save current"))
+                .on_hover_text("Snapshot the current chat's settings as a new preset")
+                .clicked()
+            {
+                let snap = self.current_settings_snapshot();
+                let name = self.new_preset_name.trim().to_string();
+                if self.storage.create_preset(&name, &snap).is_ok() {
+                    self.new_preset_name.clear();
+                    self.presets_cache = self.storage.list_presets();
+                }
+            }
+        });
+
+        ui.add_space(4.0);
+        if self.presets_cache.is_empty() {
+            ui.label(
+                egui::RichText::new("No presets yet. Save the current chat's settings above.")
+                    .italics()
+                    .weak(),
+            );
+        } else {
+            // Two-pass: render rows and collect the chosen action, then act
+            // (avoids overlapping borrows on `self`).
+            enum PresetAction {
+                Apply(i64),
+                NewFrom(i64),
+                Delete(i64),
+            }
+            let mut action: Option<PresetAction> = None;
+            for preset in &self.presets_cache {
+                ui.horizontal(|ui| {
+                    ui.label(&preset.name);
+                    if let Some(model) = &preset.settings.model {
+                        ui.weak(format!("({model})"));
+                    }
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if ui
+                            .small_button("🗑")
+                            .on_hover_text("Delete preset")
+                            .clicked()
+                        {
+                            action = Some(PresetAction::Delete(preset.id));
+                        }
+                        if ui
+                            .small_button("New chat")
+                            .on_hover_text("Open a new conversation seeded with this preset")
+                            .clicked()
+                        {
+                            action = Some(PresetAction::NewFrom(preset.id));
+                        }
+                        if ui
+                            .small_button("Apply")
+                            .on_hover_text("Apply this preset to the current chat")
+                            .clicked()
+                        {
+                            action = Some(PresetAction::Apply(preset.id));
+                        }
+                    });
+                });
+            }
+            if let Some(act) = action {
+                let preset = match act {
+                    PresetAction::Apply(id)
+                    | PresetAction::NewFrom(id)
+                    | PresetAction::Delete(id) => self
+                        .presets_cache
+                        .iter()
+                        .find(|p| p.id == id)
+                        .cloned(),
+                };
+                match act {
+                    PresetAction::Apply(_) => {
+                        if let Some(p) = preset {
+                            self.apply_settings(p.settings);
+                        }
+                    }
+                    PresetAction::NewFrom(_) => {
+                        if let Some(p) = preset {
+                            self.new_conversation();
+                            self.apply_settings(p.settings);
+                        }
+                    }
+                    PresetAction::Delete(id) => {
+                        self.storage.delete_preset(id);
+                        self.presets_cache = self.storage.list_presets();
+                    }
+                }
+            }
+        }
+    }
+
+    /// Fire a one-shot title-generation request for the given conversation.
+    /// Result lands on `title_rx` later; `process_events` applies it. Marks
+    /// the conv as `auto_titled` immediately on dispatch so a second send
+    /// before the response lands doesn't fire a duplicate request.
+    fn request_auto_title(&mut self, conv_id: i64) {
+        let messages: Vec<Message> = self
+            .messages
+            .iter()
+            .filter(|m| m.role != Role::System)
+            .take(4) // first user + first assistant pair, plus one more in case
+            .cloned()
+            .collect();
+        if messages.is_empty() {
+            return;
+        }
+        // Claim the slot now. If the call fails the title stays as the
+        // truncated first user message — the user can rename manually.
+        self.storage.mark_auto_titled(conv_id);
+        // Append the title-instruction as the final user turn.
+        let mut ctx_messages = messages;
+        ctx_messages.push(Message::text(
+            Role::User,
+            "Provide a title for this conversation in 6 words or fewer. \
+             Reply with only the title text — no quotes, no punctuation at \
+             the end, no preamble."
+                .to_string(),
+        ));
+
+        let model = match self.models.get(self.selected_model) {
+            Some(m) => m.clone(),
+            None => return,
+        };
+        let base_url = self.base_url.clone();
+        let api_key = self.current_api_key().map(|s| s.to_string());
+
+        let (tx, rx) = mpsc::unbounded_channel();
+        self.title_rx = Some(rx);
+
+        self.runtime.spawn(async move {
+            let res = api::complete_once(
+                &base_url,
+                &model,
+                &ctx_messages,
+                api_key.as_deref(),
+                Some(32),
+                Some(0.3),
+            )
+            .await;
+            let _ = tx.send((conv_id, res));
+        });
+    }
+
+    /// Debounced draft persist: writes `input` to `conversations.draft` 500ms
+    /// after the last keystroke. Returns the soonest the caller should request
+    /// a repaint at — pass through to `ctx.request_repaint_after` so the timer
+    /// fires even if egui is otherwise idle.
+    fn persist_draft_if_idle(&mut self) -> Option<std::time::Duration> {
+        const DEBOUNCE: std::time::Duration = std::time::Duration::from_millis(500);
+        if self.input != self.last_seen_input {
+            self.last_seen_input = self.input.clone();
+            self.draft_dirty_since = Some(std::time::Instant::now());
+        }
+        let t = self.draft_dirty_since?;
+        let elapsed = t.elapsed();
+        if elapsed >= DEBOUNCE {
+            if self.input != self.persisted_draft
+                && let Some(id) = self.current_conversation_id
+            {
+                self.storage.save_draft(id, &self.input);
+                self.persisted_draft = self.input.clone();
+            }
+            self.draft_dirty_since = None;
+            None
+        } else {
+            Some(DEBOUNCE - elapsed)
+        }
     }
 
     fn send_message(&mut self) {
         let raw = self.input.trim().to_string();
-        if raw.is_empty() || self.streaming {
+        // Allow send when there's text OR at least one attachment (image-only
+        // turns are valid for vision models).
+        if (raw.is_empty() && self.pending_attachments.is_empty()) || self.streaming {
             return;
         }
 
         // Slash commands intercept before model availability check, so /help
-        // and /clear work even when no models are loaded.
-        match commands::parse(&raw) {
-            ParseResult::Command(cmd) => {
-                self.input.clear();
-                self.error = None;
-                self.dispatch_command(cmd);
-                return;
+        // and /clear work even when no models are loaded. Attachments are
+        // only sent with a real chat turn — a slash command shouldn't
+        // accidentally consume them.
+        if !raw.is_empty() {
+            match commands::parse(&raw) {
+                ParseResult::Command(cmd) => {
+                    self.input.clear();
+                    self.error = None;
+                    self.dispatch_command(cmd);
+                    return;
+                }
+                ParseResult::Unknown(verb) => {
+                    self.show_toast(format!("Unknown command: /{verb} — try /help"));
+                    return;
+                }
+                ParseResult::BadArgs { verb: _, reason } => {
+                    self.show_toast(reason);
+                    return;
+                }
+                ParseResult::NotACommand => {}
             }
-            ParseResult::Unknown(verb) => {
-                self.show_toast(format!("Unknown command: /{verb} — try /help"));
-                return;
-            }
-            ParseResult::BadArgs { verb: _, reason } => {
-                self.show_toast(reason);
-                return;
-            }
-            ParseResult::NotACommand => {}
         }
 
         if self.models.is_empty() {
@@ -342,7 +782,15 @@ impl ChatApp {
         self.input.clear();
         self.error = None;
 
-        self.messages.push(Message::new(Role::User, raw));
+        // Build the user message: text part (if any) followed by image parts.
+        let mut parts: Vec<ContentPart> = Vec::new();
+        if !raw.is_empty() {
+            parts.push(ContentPart::Text { text: raw });
+        }
+        for (_, part) in self.pending_attachments.drain(..) {
+            parts.push(part);
+        }
+        self.messages.push(Message::from_parts(Role::User, parts));
         self.start_streaming();
     }
 
@@ -383,9 +831,9 @@ impl ChatApp {
                     .messages
                     .iter()
                     .rev()
-                    .find(|m| m.role == Role::Assistant && !m.content.is_empty())
+                    .find(|m| m.role == Role::Assistant && !m.is_empty_content())
                 {
-                    self.copy_to_clipboard(&last.content);
+                    self.copy_to_clipboard(&last.text_str());
                     self.show_toast("Copied last reply");
                 } else {
                     self.show_toast("No reply to copy yet");
@@ -402,7 +850,7 @@ impl ChatApp {
         }
 
         self.messages
-            .push(Message::new(Role::Assistant, String::new()));
+            .push(Message::text(Role::Assistant, String::new()));
         self.reasoning_open = false;
 
         let (tx, rx) = mpsc::unbounded_channel();
@@ -419,7 +867,7 @@ impl ChatApp {
 
         let mut messages: Vec<Message> = Vec::new();
         if !self.system_prompt.trim().is_empty() {
-            messages.push(Message::new(Role::System, self.system_prompt.clone()));
+            messages.push(Message::text(Role::System, self.system_prompt.clone()));
         }
         // All messages except the empty assistant one we just added
         messages.extend_from_slice(&self.messages[..self.messages.len() - 1]);
@@ -463,7 +911,7 @@ impl ChatApp {
         self.rx = None;
         if let Some(last) = self.messages.last()
             && last.role == Role::Assistant
-            && last.content.is_empty()
+            && last.is_empty_content()
         {
             self.messages.pop();
         }
@@ -490,7 +938,18 @@ impl ChatApp {
             return;
         }
 
-        self.messages[index].content = content;
+        // Preserve any non-text parts (image attachments) on the original
+        // message. Replacing `content` outright would silently drop images
+        // when the user edits a multimodal turn.
+        let preserved: Vec<ContentPart> = self.messages[index]
+            .content
+            .iter()
+            .filter(|p| !matches!(p, ContentPart::Text { .. }))
+            .cloned()
+            .collect();
+        let mut new_parts = vec![ContentPart::Text { text: content }];
+        new_parts.extend(preserved);
+        self.messages[index].content = new_parts;
         self.messages.truncate(index + 1);
         self.editing_message = None;
         self.edit_buffer.clear();
@@ -505,32 +964,101 @@ impl ChatApp {
     }
 
     fn process_events(&mut self) {
+        // Auto-title responses. Drain into a local vec so we don't hold a
+        // mutable borrow on self across the storage / refresh calls below.
+        let title_results: Vec<(i64, Result<String, String>)> = match &mut self.title_rx {
+            Some(rx) => {
+                let mut out = Vec::new();
+                while let Ok(item) = rx.try_recv() {
+                    out.push(item);
+                }
+                out
+            }
+            None => Vec::new(),
+        };
+        if !title_results.is_empty() {
+            // `mark_auto_titled` was already called at dispatch (see
+            // `request_auto_title`) — we only update the title text here.
+            for (conv_id, res) in title_results {
+                if let Ok(title) = res {
+                    let cleaned = sanitize_title(&title);
+                    if !cleaned.is_empty() {
+                        self.storage.update_conversation_title(conv_id, &cleaned);
+                    }
+                }
+            }
+            self.refresh_conversation_list();
+            self.title_rx = None;
+        }
+
         // Process model fetch events (separate channel)
-        if let Some(rx) = &mut self.models_rx {
-            while let Ok(event) = rx.try_recv() {
-                match event {
-                    StreamEvent::ModelsLoaded { url, models }
-                        if !models.is_empty() && url == self.base_url =>
-                    {
-                        self.models = models;
+        // Drain models_rx events into a Vec first so we can call &mut self
+        // helpers (show_toast, current_settings_snapshot) below without
+        // overlapping with the receiver borrow.
+        let model_events: Vec<StreamEvent> = match &mut self.models_rx {
+            Some(rx) => {
+                let mut out = Vec::new();
+                while let Ok(ev) = rx.try_recv() {
+                    out.push(ev);
+                }
+                out
+            }
+            None => Vec::new(),
+        };
+        for event in model_events {
+            match event {
+                StreamEvent::ModelsLoaded { url, models }
+                    if !models.is_empty() && url == self.base_url =>
+                {
+                    self.models = models;
+                    // If a conversation we just loaded asked for a specific
+                    // model, restore that selection now that names are
+                    // available. Otherwise clamp the existing index.
+                    if let Some(name) = self.pending_model_after_models_load.take() {
+                        if let Some(idx) = self.models.iter().position(|m| m == &name) {
+                            self.selected_model = idx;
+                        } else {
+                            // Stored model isn't in this endpoint's list
+                            // anymore (renamed/removed/different endpoint).
+                            // Surface it instead of silently picking a
+                            // different model.
+                            let fallback = self
+                                .models
+                                .first()
+                                .cloned()
+                                .unwrap_or_else(|| "?".to_string());
+                            self.show_toast(format!(
+                                "Model '{name}' not available; using '{fallback}'"
+                            ));
+                            self.selected_model =
+                                self.selected_model.min(self.models.len().saturating_sub(1));
+                        }
+                        // The model index just changed (or was confirmed) —
+                        // re-baseline the settings signature so the
+                        // next-frame dirty check doesn't write back
+                        // identical settings and bump updated_at, which
+                        // would shuffle the sidebar order.
+                        let snap = self.current_settings_snapshot();
+                        self.settings_signature = settings_signature(&snap);
+                    } else {
                         self.selected_model =
                             self.selected_model.min(self.models.len().saturating_sub(1));
                     }
-                    // Result for an endpoint we're no longer on — silently drop.
-                    StreamEvent::ModelsLoaded { .. } => {}
-                    StreamEvent::Done => {
-                        self.models_loading = false;
-                        self.models_rx = None;
-                        break;
-                    }
-                    StreamEvent::Error(e) => {
-                        self.error = Some(e);
-                        self.models_loading = false;
-                        self.models_rx = None;
-                        break;
-                    }
-                    _ => {}
                 }
+                // Result for an endpoint we're no longer on — silently drop.
+                StreamEvent::ModelsLoaded { .. } => {}
+                StreamEvent::Done => {
+                    self.models_loading = false;
+                    self.models_rx = None;
+                    break;
+                }
+                StreamEvent::Error(e) => {
+                    self.error = Some(e);
+                    self.models_loading = false;
+                    self.models_rx = None;
+                    break;
+                }
+                _ => {}
             }
         }
 
@@ -551,10 +1079,10 @@ impl ChatApp {
                             && last.role == Role::Assistant
                         {
                             if !self.reasoning_open {
-                                last.content.push_str("<think>\n");
+                                last.append_text("<think>\n");
                                 self.reasoning_open = true;
                             }
-                            last.content.push_str(&text);
+                            last.append_text(&text);
                         }
                     }
                     StreamEvent::Token(token) => {
@@ -568,10 +1096,10 @@ impl ChatApp {
                             && last.role == Role::Assistant
                         {
                             if self.reasoning_open {
-                                last.content.push_str("\n</think>\n\n");
+                                last.append_text("\n</think>\n\n");
                                 self.reasoning_open = false;
                             }
-                            last.content.push_str(&token);
+                            last.append_text(&token);
                         }
                     }
                     StreamEvent::UsageInfo(usage) => {
@@ -588,7 +1116,7 @@ impl ChatApp {
                             && let Some(last) = self.messages.last_mut()
                             && last.role == Role::Assistant
                         {
-                            last.content.push_str("\n</think>\n");
+                            last.append_text("\n</think>\n");
                         }
                         self.reasoning_open = false;
                         just_finished_streaming = true;
@@ -605,7 +1133,7 @@ impl ChatApp {
                             && let Some(last) = self.messages.last_mut()
                             && last.role == Role::Assistant
                         {
-                            last.content.push_str("\n</think>\n");
+                            last.append_text("\n</think>\n");
                         }
                         self.reasoning_open = false;
                         self.streaming = false;
@@ -613,7 +1141,7 @@ impl ChatApp {
                         self.rx = None;
                         if let Some(last) = self.messages.last()
                             && last.role == Role::Assistant
-                            && last.content.is_empty()
+                            && last.is_empty_content()
                         {
                             self.messages.pop();
                         }
@@ -787,6 +1315,14 @@ impl eframe::App for ChatApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         self.process_events();
+
+        // Drag-and-drop: read each frame, *not* per-panel — eframe delivers
+        // dropped_files at the context level, so a single drain at the top
+        // of the frame is the right shape.
+        let dropped = ctx.input(|i| i.raw.dropped_files.clone());
+        if !dropped.is_empty() {
+            self.handle_dropped_files(dropped);
+        }
 
         if self.streaming || self.models_loading {
             ctx.request_repaint();
@@ -1150,7 +1686,22 @@ impl eframe::App for ChatApp {
                         }
                         self.fetch_models();
                     }
+                    let presets_label = if self.show_presets {
+                        "Presets ▼"
+                    } else {
+                        "Presets"
+                    };
+                    if ui.button(presets_label).clicked() {
+                        self.show_presets = !self.show_presets;
+                        if self.show_presets {
+                            self.presets_cache = self.storage.list_presets();
+                        }
+                    }
                 });
+
+                if self.show_presets {
+                    self.show_presets_panel(ui);
+                }
             }
         });
 
@@ -1211,7 +1762,7 @@ impl eframe::App for ChatApp {
                     egui::ScrollArea::vertical().show(ui, |ui| {
                         let mut action: Option<SidebarAction> = None;
 
-                        for (id, title) in &self.conversation_list {
+                        for (id, title, pinned) in &self.conversation_list {
                             let is_current = self.current_conversation_id == Some(*id);
 
                             // Inline rename mode
@@ -1246,6 +1797,11 @@ impl eframe::App for ChatApp {
                                 let mut kebab_ui =
                                     ui.new_child(egui::UiBuilder::new().max_rect(kebab_rect));
                                 kebab_ui.menu_button("...", |ui| {
+                                    let pin_label = if *pinned { "Unpin" } else { "Pin" };
+                                    if ui.button(pin_label).clicked() {
+                                        action = Some(SidebarAction::TogglePin(*id));
+                                        ui.close();
+                                    }
                                     if ui.button("Rename").clicked() {
                                         action = Some(SidebarAction::StartRename(*id));
                                         ui.close();
@@ -1270,8 +1826,13 @@ impl eframe::App for ChatApp {
                                 );
                                 let mut title_ui =
                                     ui.new_child(egui::UiBuilder::new().max_rect(title_rect));
+                                let display_title = if *pinned {
+                                    format!("📌 {title}")
+                                } else {
+                                    title.clone()
+                                };
                                 let resp = title_ui.add(
-                                    egui::Label::new(egui::RichText::new(title.as_str()).color(
+                                    egui::Label::new(egui::RichText::new(display_title).color(
                                         if is_current {
                                             title_ui.visuals().strong_text_color()
                                         } else {
@@ -1289,6 +1850,11 @@ impl eframe::App for ChatApp {
 
                                 // Right-click context menu
                                 resp.context_menu(|ui| {
+                                    let pin_label = if *pinned { "Unpin" } else { "Pin" };
+                                    if ui.button(pin_label).clicked() {
+                                        action = Some(SidebarAction::TogglePin(*id));
+                                        ui.close();
+                                    }
                                     if ui.button("Rename").clicked() {
                                         action = Some(SidebarAction::StartRename(*id));
                                         ui.close();
@@ -1314,8 +1880,10 @@ impl eframe::App for ChatApp {
                                 self.copy_to_clipboard(&md);
                             }
                             Some(SidebarAction::StartRename(id)) => {
-                                if let Some((_, title)) =
-                                    self.conversation_list.iter().find(|(cid, _)| *cid == id)
+                                if let Some((_, title, _)) = self
+                                    .conversation_list
+                                    .iter()
+                                    .find(|(cid, _, _)| *cid == id)
                                 {
                                     self.rename_buffer = title.clone();
                                 }
@@ -1329,6 +1897,16 @@ impl eframe::App for ChatApp {
                                 }
                                 self.renaming_conversation = None;
                                 self.rename_buffer.clear();
+                            }
+                            Some(SidebarAction::TogglePin(id)) => {
+                                let was_pinned = self
+                                    .conversation_list
+                                    .iter()
+                                    .find(|(cid, _, _)| *cid == id)
+                                    .map(|(_, _, p)| *p)
+                                    .unwrap_or(false);
+                                self.storage.set_pinned(id, !was_pinned);
+                                self.refresh_conversation_list();
                             }
                             None => {}
                         }
@@ -1348,7 +1926,7 @@ impl eframe::App for ChatApp {
                     // A very rough rule of thumb is ~4 characters per token
                     let mut char_count = 0;
                     for msg in &self.messages {
-                        char_count += msg.content.len();
+                        char_count += msg.text_str().len();
                     }
                     if !self.system_prompt.is_empty() {
                         char_count += self.system_prompt.len();
@@ -1361,7 +1939,7 @@ impl eframe::App for ChatApp {
                         let mut full_text = self.system_prompt.clone();
                         full_text.push('\n');
                         for m in &self.messages {
-                            full_text.push_str(&m.content);
+                            full_text.push_str(&m.text_str());
                             full_text.push('\n');
                         }
                         full_text.push_str(&self.input);
@@ -1406,6 +1984,25 @@ impl eframe::App for ChatApp {
         egui::Panel::bottom("input_panel").show_inside(ui, |ui| {
             if let Some(err) = &self.error {
                 ui.colored_label(egui::Color32::RED, format!("Error: {err}"));
+            }
+
+            // Pending attachment chips: render one row per attachment with a
+            // remove (✕) button. Two-pass to avoid mutating during iteration.
+            if !self.pending_attachments.is_empty() {
+                let mut remove_idx: Option<usize> = None;
+                ui.horizontal_wrapped(|ui| {
+                    for (i, (name, _)) in self.pending_attachments.iter().enumerate() {
+                        ui.group(|ui| {
+                            ui.label(format!("📎 {name}"));
+                            if ui.small_button("✕").on_hover_text("Remove").clicked() {
+                                remove_idx = Some(i);
+                            }
+                        });
+                    }
+                });
+                if let Some(i) = remove_idx {
+                    self.pending_attachments.remove(i);
+                }
             }
 
             let enter_pressed = ui.input(|i| i.key_pressed(egui::Key::Enter));
@@ -1503,7 +2100,7 @@ impl eframe::App for ChatApp {
                     Some(q) => self
                         .messages
                         .iter()
-                        .map(|m| m.content.to_ascii_lowercase().contains(q))
+                        .map(|m| m.text_str().to_ascii_lowercase().contains(q))
                         .collect(),
                     None => Vec::new(),
                 };
@@ -1581,7 +2178,7 @@ impl eframe::App for ChatApp {
                             {
                                 let msg = &self.messages[i];
                                 role = msg.role.clone();
-                                content_clone = msg.content.clone();
+                                content_clone = msg.text_str();
                                 created_at = msg.created_at;
                             }
                             let (prefix, color) = match role {
@@ -1696,10 +2293,10 @@ impl eframe::App for ChatApp {
 
                         match action {
                             Some(MessageAction::Copy(i)) if i < self.messages.len() => {
-                                self.copy_to_clipboard(&self.messages[i].content);
+                                self.copy_to_clipboard(&self.messages[i].text_str());
                             }
                             Some(MessageAction::StartEdit(i)) if i < self.messages.len() => {
-                                self.edit_buffer = self.messages[i].content.clone();
+                                self.edit_buffer = self.messages[i].text_str();
                                 self.editing_message = Some(i);
                             }
                             Some(MessageAction::FinishEdit(i)) => {
@@ -1745,6 +2342,17 @@ impl eframe::App for ChatApp {
                 });
             ctx.request_repaint_after(std::time::Duration::from_millis(200));
         }
+
+        // Per-frame: persist any per-conversation setting changes the user
+        // made via the settings panel (or other widgets). Cheap; the dirty
+        // check short-circuits when nothing's moved.
+        self.persist_settings_if_dirty();
+
+        // Debounced draft save. Need to repaint when the debounce timer is
+        // due, otherwise egui sleeps and the draft never lands.
+        if let Some(remaining) = self.persist_draft_if_idle() {
+            ctx.request_repaint_after(remaining);
+        }
     }
 }
 
@@ -1762,6 +2370,152 @@ enum SidebarAction {
     Export(i64),
     StartRename(i64),
     FinishRename(i64),
+    TogglePin(i64),
+}
+
+/// MIME type for an image file extension, or None if not a supported image.
+/// Limited to the formats vision-capable APIs accept (OpenAI, OpenRouter,
+/// Anthropic-via-proxy). HEIC etc. would need decoding.
+fn image_mime_for_ext(ext: &str) -> Option<&'static str> {
+    match ext {
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "webp" => Some("image/webp"),
+        "gif" => Some("image/gif"),
+        _ => None,
+    }
+}
+
+/// True if the file extension looks like plain text we can safely inline as a
+/// fenced code block. Conservative on purpose — anything binary-ish is
+/// excluded so we don't dump random bytes into the chat.
+fn is_text_extension(ext: &str) -> bool {
+    matches!(
+        ext,
+        "txt"
+            | "md"
+            | "markdown"
+            | "rs"
+            | "py"
+            | "js"
+            | "jsx"
+            | "ts"
+            | "tsx"
+            | "json"
+            | "yaml"
+            | "yml"
+            | "toml"
+            | "html"
+            | "css"
+            | "scss"
+            | "go"
+            | "java"
+            | "kt"
+            | "kts"
+            | "swift"
+            | "c"
+            | "h"
+            | "cc"
+            | "cpp"
+            | "hpp"
+            | "rb"
+            | "sh"
+            | "bash"
+            | "zsh"
+            | "fish"
+            | "sql"
+            | "lua"
+            | "php"
+            | "pl"
+            | "r"
+            | "scala"
+            | "ex"
+            | "exs"
+            | "elm"
+            | "hs"
+            | "clj"
+            | "cs"
+            | "fs"
+            | "vue"
+            | "svelte"
+            | "xml"
+            | "csv"
+            | "tsv"
+            | "log"
+            | "ini"
+            | "conf"
+            // `env` deliberately excluded — `secrets.env` / `prod.env` etc.
+            // commonly hold credentials. Don't auto-inline them into the chat.
+            | "diff"
+            | "patch"
+    )
+}
+
+/// Best-effort markdown fence language for an extension. Returns the
+/// extension itself when there's no remap, so unknown extensions still get
+/// a (sometimes-syntactic-highlight-friendly) tag rather than a bare fence.
+fn lang_for_ext(ext: &str) -> String {
+    match ext {
+        "rs" => "rust".to_string(),
+        "py" => "python".to_string(),
+        "js" | "jsx" => "javascript".to_string(),
+        "ts" | "tsx" => "typescript".to_string(),
+        "rb" => "ruby".to_string(),
+        "sh" | "bash" => "bash".to_string(),
+        "zsh" | "fish" => "sh".to_string(),
+        "md" | "markdown" => "markdown".to_string(),
+        "yml" => "yaml".to_string(),
+        "kt" | "kts" => "kotlin".to_string(),
+        "cs" => "csharp".to_string(),
+        "fs" => "fsharp".to_string(),
+        "ex" | "exs" => "elixir".to_string(),
+        "hs" => "haskell".to_string(),
+        "cc" | "cpp" | "hpp" => "cpp".to_string(),
+        other => other.to_string(),
+    }
+}
+
+/// Trim quotes, trailing punctuation, and whitespace from an LLM-generated
+/// title. Models occasionally wrap their reply in quotes or add a trailing
+/// period despite instructions; clean those up rather than store them
+/// verbatim. Hard cap at 80 chars to keep the sidebar tidy.
+fn sanitize_title(s: &str) -> String {
+    let trimmed = s.trim();
+    // Strip a single pair of surrounding quotes.
+    let unquoted = if (trimmed.starts_with('"') && trimmed.ends_with('"'))
+        || (trimmed.starts_with('\'') && trimmed.ends_with('\''))
+    {
+        &trimmed[1..trimmed.len().saturating_sub(1)]
+    } else {
+        trimmed
+    };
+    let no_trailing = unquoted.trim_end_matches(['.', '!', '?', ',', ';']);
+    let collapsed: String = no_trailing.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.chars().count() > 80 {
+        collapsed.chars().take(80).collect::<String>() + "…"
+    } else {
+        collapsed
+    }
+}
+
+/// Hash of the live per-conversation settings. Fed to a frame-by-frame dirty
+/// check so settings persist whenever the user moves a slider, edits the
+/// system prompt, etc., without a separate "save settings" button.
+fn settings_signature(s: &ConversationSettings) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    s.model.hash(&mut h);
+    s.system_prompt.hash(&mut h);
+    // f32 isn't Hash; fold the bits.
+    s.temperature.map(|v| v.to_bits()).hash(&mut h);
+    s.max_tokens.hash(&mut h);
+    s.use_max_tokens.hash(&mut h);
+    s.top_p.map(|v| v.to_bits()).hash(&mut h);
+    s.frequency_penalty.map(|v| v.to_bits()).hash(&mut h);
+    s.presence_penalty.map(|v| v.to_bits()).hash(&mut h);
+    s.stop_sequences.hash(&mut h);
+    s.endpoint.hash(&mut h);
+    h.finish()
 }
 
 /// Cheap content signature for the token-estimate cache. Combines lengths and
@@ -1775,16 +2529,20 @@ fn token_signature(system: &str, messages: &[Message], pending: &str) -> u64 {
     pending.hash(&mut h);
     messages.len().hash(&mut h);
     for m in messages {
-        m.content.len().hash(&mut h);
+        let s = m.text_str();
+        s.len().hash(&mut h);
         // Hash a small fingerprint of each message — full content hash would
         // be slower than just re-tokenizing, defeating the cache.
-        let bytes = m.content.as_bytes();
+        let bytes = s.as_bytes();
         if !bytes.is_empty() {
             bytes[bytes.len() - 1].hash(&mut h);
             if bytes.len() >= 16 {
                 bytes[bytes.len() - 16].hash(&mut h);
             }
         }
+        // Image attachments invalidate the cache too — token cost depends on
+        // the number and detail of image parts, not just text.
+        m.images().count().hash(&mut h);
     }
     h.finish()
 }
@@ -1798,17 +2556,16 @@ fn token_signature(system: &str, messages: &[Message], pending: &str) -> u64 {
 /// adds (ChatML tokens etc.), so the real prompt tokens will be a few percent
 /// higher than this estimate.
 fn estimate_tokens(system: &str, messages: &[Message], pending: &str) -> usize {
+    let texts: Vec<String> = messages.iter().map(|m| m.text_str()).collect();
     let mut full = String::with_capacity(
-        system.len()
-            + pending.len()
-            + messages.iter().map(|m| m.content.len() + 1).sum::<usize>(),
+        system.len() + pending.len() + texts.iter().map(|s| s.len() + 1).sum::<usize>(),
     );
     if !system.is_empty() {
         full.push_str(system);
         full.push('\n');
     }
-    for m in messages {
-        full.push_str(&m.content);
+    for s in &texts {
+        full.push_str(s);
         full.push('\n');
     }
     full.push_str(pending);

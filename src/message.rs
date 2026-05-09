@@ -8,25 +8,98 @@ pub enum Role {
     Assistant,
 }
 
+/// A single piece of message content. Mirrors OpenAI's chat completions
+/// `content` array shape so we can serialize directly to the wire format.
+/// Pure-text messages are `[Text { text }]`; multimodal messages mix
+/// `Text` and `ImageUrl` parts.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum ContentPart {
+    Text { text: String },
+    ImageUrl { image_url: ImageUrl },
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ImageUrl {
+    pub url: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub detail: Option<String>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Message {
     pub role: Role,
-    pub content: String,
+    pub content: Vec<ContentPart>,
     /// Unix epoch milliseconds. Session-local — never sent to the API and not
-    /// persisted to SQLite (Phase 2 will migrate the schema). Set when a
-    /// message is added in the current session; messages loaded from disk
-    /// have `None` and the UI hides the hover timestamp for them.
+    /// persisted as its own column for messages loaded before phase 2 (those
+    /// have `None`). Set when a message is added in the current session.
     #[serde(skip_serializing, default)]
     pub created_at: Option<i64>,
 }
 
 impl Message {
-    pub fn new(role: Role, content: String) -> Self {
+    /// Construct a text-only message — the most common shape.
+    pub fn text(role: Role, body: String) -> Self {
         Self {
             role,
-            content,
+            content: vec![ContentPart::Text { text: body }],
             created_at: Some(now_ms()),
         }
+    }
+
+    /// Construct from raw parts (used when loading from storage / building
+    /// multimodal messages with attachments).
+    pub fn from_parts(role: Role, parts: Vec<ContentPart>) -> Self {
+        Self {
+            role,
+            content: parts,
+            created_at: Some(now_ms()),
+        }
+    }
+
+    /// Concatenate all `Text` parts into a single string. Image parts are
+    /// skipped. This is the right call for any UI/logic that previously
+    /// treated `content` as a `String` (rendering, search, char counts).
+    pub fn text_str(&self) -> String {
+        let mut out = String::new();
+        for part in &self.content {
+            if let ContentPart::Text { text } = part {
+                out.push_str(text);
+            }
+        }
+        out
+    }
+
+    /// Append text to the trailing `Text` part if present, otherwise push a
+    /// new `Text` part. Used by streaming token append and reasoning-tag
+    /// insertion in the assistant message.
+    pub fn append_text(&mut self, s: &str) {
+        if let Some(ContentPart::Text { text }) = self.content.last_mut() {
+            text.push_str(s);
+        } else {
+            self.content.push(ContentPart::Text {
+                text: s.to_string(),
+            });
+        }
+    }
+
+    /// True if the message has no parts, or all `Text` parts are empty (no
+    /// image parts either). Mirrors the old `content.is_empty()` check.
+    pub fn is_empty_content(&self) -> bool {
+        self.content.iter().all(|p| match p {
+            ContentPart::Text { text } => text.is_empty(),
+            ContentPart::ImageUrl { .. } => false,
+        })
+    }
+
+    /// Iterator over image attachments. Used by send-time validation and
+    /// (eventually) thumbnail rendering.
+    #[allow(dead_code)]
+    pub fn images(&self) -> impl Iterator<Item = &ImageUrl> {
+        self.content.iter().filter_map(|p| match p {
+            ContentPart::ImageUrl { image_url } => Some(image_url),
+            _ => None,
+        })
     }
 }
 
@@ -36,4 +109,153 @@ pub fn now_ms() -> i64 {
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn text_only_serializes_as_parts_array() {
+        let m = Message::text(Role::User, "hello".to_string());
+        let json = serde_json::to_value(&m).unwrap();
+        assert_eq!(json["role"], "user");
+        assert_eq!(json["content"][0]["type"], "text");
+        assert_eq!(json["content"][0]["text"], "hello");
+    }
+
+    #[test]
+    fn image_part_matches_openai_wire_shape() {
+        let m = Message::from_parts(
+            Role::User,
+            vec![
+                ContentPart::Text {
+                    text: "describe this".to_string(),
+                },
+                ContentPart::ImageUrl {
+                    image_url: ImageUrl {
+                        url: "data:image/png;base64,AAAA".to_string(),
+                        detail: Some("low".to_string()),
+                    },
+                },
+            ],
+        );
+        let json = serde_json::to_value(&m).unwrap();
+        assert_eq!(json["content"][1]["type"], "image_url");
+        assert_eq!(
+            json["content"][1]["image_url"]["url"],
+            "data:image/png;base64,AAAA"
+        );
+        assert_eq!(json["content"][1]["image_url"]["detail"], "low");
+    }
+
+    #[test]
+    fn image_url_omits_detail_when_none() {
+        let m = Message::from_parts(
+            Role::User,
+            vec![ContentPart::ImageUrl {
+                image_url: ImageUrl {
+                    url: "x".to_string(),
+                    detail: None,
+                },
+            }],
+        );
+        let json = serde_json::to_string(&m).unwrap();
+        assert!(!json.contains("detail"), "detail should be omitted: {json}");
+    }
+
+    #[test]
+    fn round_trip_preserves_parts() {
+        let original = Message::from_parts(
+            Role::Assistant,
+            vec![
+                ContentPart::Text {
+                    text: "before".to_string(),
+                },
+                ContentPart::ImageUrl {
+                    image_url: ImageUrl {
+                        url: "u".to_string(),
+                        detail: None,
+                    },
+                },
+                ContentPart::Text {
+                    text: "after".to_string(),
+                },
+            ],
+        );
+        let json = serde_json::to_string(&original).unwrap();
+        let parsed: Message = serde_json::from_str(&json).unwrap();
+        assert_eq!(original.content, parsed.content);
+    }
+
+    #[test]
+    fn text_str_concatenates_text_parts_only() {
+        let m = Message::from_parts(
+            Role::User,
+            vec![
+                ContentPart::Text {
+                    text: "foo ".to_string(),
+                },
+                ContentPart::ImageUrl {
+                    image_url: ImageUrl {
+                        url: "x".to_string(),
+                        detail: None,
+                    },
+                },
+                ContentPart::Text {
+                    text: "bar".to_string(),
+                },
+            ],
+        );
+        assert_eq!(m.text_str(), "foo bar");
+    }
+
+    #[test]
+    fn append_text_extends_trailing_text_part() {
+        let mut m = Message::text(Role::Assistant, "hello".to_string());
+        m.append_text(" world");
+        assert_eq!(m.content.len(), 1);
+        assert_eq!(m.text_str(), "hello world");
+    }
+
+    #[test]
+    fn append_text_creates_part_if_last_is_image() {
+        let mut m = Message::from_parts(
+            Role::User,
+            vec![ContentPart::ImageUrl {
+                image_url: ImageUrl {
+                    url: "x".to_string(),
+                    detail: None,
+                },
+            }],
+        );
+        m.append_text("caption");
+        assert_eq!(m.content.len(), 2);
+        assert_eq!(m.text_str(), "caption");
+    }
+
+    #[test]
+    fn append_text_creates_part_when_empty() {
+        let mut m = Message::from_parts(Role::Assistant, Vec::new());
+        m.append_text("first");
+        assert_eq!(m.content.len(), 1);
+        assert_eq!(m.text_str(), "first");
+    }
+
+    #[test]
+    fn is_empty_content_handles_text_and_images() {
+        assert!(Message::from_parts(Role::User, Vec::new()).is_empty_content());
+        assert!(Message::text(Role::User, String::new()).is_empty_content());
+        assert!(!Message::text(Role::User, "x".to_string()).is_empty_content());
+        let with_img = Message::from_parts(
+            Role::User,
+            vec![ContentPart::ImageUrl {
+                image_url: ImageUrl {
+                    url: "x".to_string(),
+                    detail: None,
+                },
+            }],
+        );
+        assert!(!with_img.is_empty_content());
+    }
 }
