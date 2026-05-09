@@ -1,0 +1,11 @@
+why in model_limits.rs are we hardcoding context windows? that seems like a bad design pattern
+
+---
+
+why do we need context window information anyway?
+
+---
+
+yeah amend the PR with that. 
+
+also i have the github cli installed, so feel free to generate the PR yourself.
