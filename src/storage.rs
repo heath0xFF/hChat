@@ -26,6 +26,9 @@ pub struct ConversationSettings {
     pub presence_penalty: Option<f32>,
     pub stop_sequences: Vec<String>,
     pub endpoint: Option<String>,
+    /// Working directory for tool calls in this conversation. `None` falls
+    /// back to `~`. Set per-conversation via the settings panel.
+    pub working_dir: Option<String>,
 }
 
 pub struct Storage {
@@ -137,6 +140,8 @@ impl Storage {
             ("pinned", "INTEGER NOT NULL DEFAULT 0"),
             ("draft", "TEXT"),
             ("auto_titled", "INTEGER NOT NULL DEFAULT 0"),
+            // Phase 5a: per-conversation working directory for tool calls.
+            ("working_dir", "TEXT"),
         ];
         const MSG_COLS: &[(&str, &str)] = &[
             // SQLite allows ALTER TABLE ADD COLUMN with a self-referencing
@@ -145,6 +150,11 @@ impl Storage {
             ("parent_id", "INTEGER REFERENCES messages(id) ON DELETE CASCADE"),
             ("branch_index", "INTEGER NOT NULL DEFAULT 0"),
             ("created_at", "INTEGER"),
+            // Phase 5a: assistant rows can carry tool_calls (JSON-encoded
+            // Vec<ToolCall>); rows with role='tool' carry the tool_call_id
+            // they're answering.
+            ("tool_calls", "TEXT"),
+            ("tool_call_id", "TEXT"),
         ];
         const PRESET_COLS: &[(&str, &str)] = &[
             ("model", "TEXT"),
@@ -306,17 +316,36 @@ impl Storage {
                 Role::System => "system",
                 Role::User => "user",
                 Role::Assistant => "assistant",
+                Role::Tool => "tool",
             };
             let content_json = serde_json::to_string(&msg.content)
                 .map_err(|e| format!("Failed to encode content: {e}"))?;
+            let tool_calls_json: Option<String> = match &msg.tool_calls {
+                Some(tcs) if !tcs.is_empty() => Some(
+                    serde_json::to_string(tcs)
+                        .map_err(|e| format!("Failed to encode tool_calls: {e}"))?,
+                ),
+                _ => None,
+            };
             match msg.id {
                 Some(id) => {
                     // Streaming append on the assistant message updates
                     // content frequently; parent_id and branch_index never
-                    // change after insert, so don't touch them.
+                    // change after insert, so don't touch them. tool_calls
+                    // and tool_call_id are also written here so an in-place
+                    // update on an assistant message that gained tool calls
+                    // mid-stream lands them.
                     tx.execute(
-                        "UPDATE messages SET content = ?1, created_at = ?2 WHERE id = ?3",
-                        params![content_json, msg.created_at, id],
+                        "UPDATE messages SET content = ?1, created_at = ?2,
+                                             tool_calls = ?3, tool_call_id = ?4
+                         WHERE id = ?5",
+                        params![
+                            content_json,
+                            msg.created_at,
+                            tool_calls_json,
+                            msg.tool_call_id,
+                            id
+                        ],
                     )
                     .map_err(|e| format!("Failed to update message: {e}"))?;
                     prev_id = Some(id);
@@ -340,8 +369,9 @@ impl Storage {
                     }
                     tx.execute(
                         "INSERT INTO messages
-                         (conversation_id, role, content, position, parent_id, branch_index, created_at)
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                         (conversation_id, role, content, position, parent_id, branch_index,
+                          created_at, tool_calls, tool_call_id)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                         params![
                             conversation_id,
                             role_str,
@@ -350,6 +380,8 @@ impl Storage {
                             msg.parent_id,
                             msg.branch_index,
                             msg.created_at,
+                            tool_calls_json,
+                            msg.tool_call_id,
                         ],
                     )
                     .map_err(|e| format!("Failed to insert message: {e}"))?;
@@ -460,7 +492,8 @@ impl Storage {
         let mut stmt = self
             .conn
             .prepare(
-                "SELECT id, role, content, created_at, parent_id, branch_index, position
+                "SELECT id, role, content, created_at, parent_id, branch_index, position,
+                        tool_calls, tool_call_id
                  FROM messages WHERE conversation_id = ?1",
             )
             .ok()?;
@@ -707,6 +740,7 @@ impl Storage {
                 Role::User => "**You**",
                 Role::Assistant => "**AI**",
                 Role::System => "**System**",
+                Role::Tool => "**Tool**",
             };
             let body = msg.text_str();
             let image_count = msg.images().count();
@@ -727,7 +761,8 @@ impl Storage {
         self.conn
             .query_row(
                 "SELECT model, system_prompt, temperature, max_tokens, use_max_tokens,
-                        top_p, frequency_penalty, presence_penalty, stop_sequences, endpoint
+                        top_p, frequency_penalty, presence_penalty, stop_sequences, endpoint,
+                        working_dir
                  FROM conversations WHERE id = ?1",
                 params![id],
                 |row| {
@@ -755,6 +790,7 @@ impl Storage {
                             .map(|v| v as f32),
                         stop_sequences,
                         endpoint: row.get(9).ok(),
+                        working_dir: row.get(10).ok(),
                     })
                 },
             )
@@ -773,8 +809,9 @@ impl Storage {
                  SET model = ?1, system_prompt = ?2, temperature = ?3, max_tokens = ?4,
                      use_max_tokens = ?5, top_p = ?6, frequency_penalty = ?7,
                      presence_penalty = ?8, stop_sequences = ?9, endpoint = ?10,
+                     working_dir = ?11,
                      updated_at = datetime('now')
-                 WHERE id = ?11",
+                 WHERE id = ?12",
                 params![
                     s.model,
                     s.system_prompt,
@@ -786,6 +823,7 @@ impl Storage {
                     s.presence_penalty.map(|v| v as f64),
                     stop_json,
                     s.endpoint,
+                    s.working_dir,
                     id,
                 ],
             )
@@ -883,6 +921,10 @@ impl Storage {
                         .map(|v| v as f32),
                     stop_sequences,
                     endpoint: row.get(11).ok(),
+                    // Presets don't carry a working_dir today — there's no
+                    // useful default ("be in /Users/heath/projects/X" makes
+                    // sense for a conv but not as a portable preset).
+                    working_dir: None,
                 },
             })
         })
@@ -957,7 +999,10 @@ struct MessageRow {
     created_at: Option<i64>,
     parent_id: Option<i64>,
     branch_index: i64,
+    #[allow(dead_code)]
     position: i64,
+    tool_calls: Option<Vec<crate::message::ToolCall>>,
+    tool_call_id: Option<String>,
 }
 
 impl MessageRow {
@@ -967,11 +1012,16 @@ impl MessageRow {
             "system" => Role::System,
             "user" => Role::User,
             "assistant" => Role::Assistant,
+            "tool" => Role::Tool,
             _ => Role::Assistant,
         };
         let content_raw: String = row.get(2)?;
         let content: Vec<ContentPart> = serde_json::from_str(&content_raw)
             .unwrap_or_else(|_| vec![ContentPart::Text { text: content_raw }]);
+        let tool_calls_raw: Option<String> = row.get(7).ok();
+        let tool_calls = tool_calls_raw
+            .as_deref()
+            .and_then(|s| serde_json::from_str::<Vec<crate::message::ToolCall>>(s).ok());
         Ok(MessageRow {
             id: row.get(0)?,
             role,
@@ -982,6 +1032,8 @@ impl MessageRow {
             // than silently default to 0 if the row shape ever drifts.
             branch_index: row.get(5)?,
             position: row.get(6)?,
+            tool_calls,
+            tool_call_id: row.get(8).ok(),
         })
     }
 
@@ -989,6 +1041,8 @@ impl MessageRow {
         Message {
             role: self.role,
             content: self.content,
+            tool_calls: self.tool_calls,
+            tool_call_id: self.tool_call_id,
             created_at: self.created_at,
             id: Some(self.id),
             parent_id: self.parent_id,
@@ -1179,6 +1233,7 @@ mod tests {
             presence_penalty: Some(0.5),
             stop_sequences: vec!["END".to_string(), "STOP".to_string()],
             endpoint: Some("https://openrouter.ai/api/v1".to_string()),
+            working_dir: Some("/tmp/work".to_string()),
         };
         s.save_conversation_settings(id, &original);
         let loaded = s.load_conversation_settings(id);
@@ -1441,6 +1496,54 @@ mod tests {
         s.save_messages(conv, &mut [a]).unwrap();
         // Now next is 1.
         assert_eq!(s.next_branch_index(conv, Some(user_id)), 1);
+    }
+
+    #[test]
+    fn round_trips_assistant_tool_calls_and_tool_result() {
+        // Phase 5a regression: an assistant message with tool_calls + the
+        // following Role::Tool result must survive save/load with both the
+        // tool_calls JSON and the tool_call_id intact.
+        let s = mem_storage();
+        let conv = s.create_conversation("toolchat").unwrap();
+
+        let user = Message::text(Role::User, "what's in foo.rs?".into());
+        let mut assistant = Message::text(Role::Assistant, "I'll read it.".into());
+        assistant.tool_calls = Some(vec![crate::message::ToolCall {
+            id: "call_abc".into(),
+            call_type: "function".into(),
+            function: crate::message::ToolCallFunction {
+                name: "read_file".into(),
+                arguments: r#"{"path":"foo.rs"}"#.into(),
+            },
+        }]);
+        let tool_result = Message::tool_result("call_abc".into(), "<file contents>".into());
+
+        let mut msgs = vec![user, assistant, tool_result];
+        s.save_messages(conv, &mut msgs).unwrap();
+
+        let loaded = s.load_messages(conv);
+        assert_eq!(loaded.len(), 3);
+        assert_eq!(loaded[1].role, Role::Assistant);
+        let calls = loaded[1].tool_calls.as_ref().expect("tool_calls preserved");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].id, "call_abc");
+        assert_eq!(calls[0].function.name, "read_file");
+        assert_eq!(loaded[2].role, Role::Tool);
+        assert_eq!(loaded[2].tool_call_id.as_deref(), Some("call_abc"));
+        assert!(loaded[2].text_str().contains("<file contents>"));
+    }
+
+    #[test]
+    fn working_dir_round_trips_in_settings() {
+        let s = mem_storage();
+        let conv = s.create_conversation("wd").unwrap();
+        let original = ConversationSettings {
+            working_dir: Some("/Users/heath/code/hChat".into()),
+            ..ConversationSettings::default()
+        };
+        s.save_conversation_settings(conv, &original);
+        let loaded = s.load_conversation_settings(conv);
+        assert_eq!(loaded.working_dir.as_deref(), Some("/Users/heath/code/hChat"));
     }
 
     #[test]

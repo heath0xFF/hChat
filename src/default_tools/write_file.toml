@@ -1,0 +1,27 @@
+name = "write_file"
+description = """
+Write text to a file. Overwrites the file if it already exists; pass
+`append = true` to append instead. Creates parent directories as needed.
+Relative paths resolve against the current conversation's working directory.
+
+Confirmation is required by default — the user sees the path and a content
+preview before the write happens.
+"""
+handler = "builtin:write_file"
+safety = "confirm"
+
+[parameters]
+type = "object"
+required = ["path", "content"]
+
+[parameters.properties.path]
+type = "string"
+description = "Path to write. Absolute or relative to the conversation working_dir."
+
+[parameters.properties.content]
+type = "string"
+description = "Text content to write."
+
+[parameters.properties.append]
+type = "boolean"
+description = "If true, append instead of overwriting. Default false."

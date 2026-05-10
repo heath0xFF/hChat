@@ -23,6 +23,7 @@ toml = "0.8"
 font-kit = "0.14.3"
 tiktoken-rs = "0.11.0"
 base64 = "0.22"
+regex = "1"
 
 [package.metadata.deb]
 maintainer = "Heath"

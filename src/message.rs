@@ -6,6 +6,31 @@ pub enum Role {
     System,
     User,
     Assistant,
+    /// A tool result, sent back to the model after a tool call. Carries
+    /// `tool_call_id` referencing the assistant's call.
+    Tool,
+}
+
+/// One tool invocation as the model emitted it. OpenAI ships these on
+/// assistant messages as a separate `tool_calls` field (not as content
+/// parts). Multiple tools can be called in one assistant turn.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ToolCall {
+    pub id: String,
+    /// Always `"function"` in the current OpenAI shape — kept as a field
+    /// for forward-compatibility if more types appear.
+    #[serde(rename = "type")]
+    pub call_type: String,
+    pub function: ToolCallFunction,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+pub struct ToolCallFunction {
+    pub name: String,
+    /// JSON-encoded arguments string. OpenAI sends it as a string (not a
+    /// nested object) — we keep it that way so we can pass it through the
+    /// tools' parameter validation later.
+    pub arguments: String,
 }
 
 /// A single piece of message content. Mirrors OpenAI's chat completions
@@ -30,6 +55,15 @@ pub struct ImageUrl {
 pub struct Message {
     pub role: Role,
     pub content: Vec<ContentPart>,
+    /// Tool calls the assistant emitted in this turn. Sent on the wire as a
+    /// peer of `content`, not nested inside it. `None` for non-assistant
+    /// messages and for assistant turns that didn't call any tools.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_calls: Option<Vec<ToolCall>>,
+    /// For Role::Tool messages: the id of the tool_call this is answering.
+    /// Required by the API on tool messages, ignored on others.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_call_id: Option<String>,
     /// Unix epoch milliseconds. Session-local — never sent to the API and not
     /// persisted as its own column for messages loaded before phase 2 (those
     /// have `None`). Set when a message is added in the current session.
@@ -59,6 +93,8 @@ impl Message {
         Self {
             role,
             content: vec![ContentPart::Text { text: body }],
+            tool_calls: None,
+            tool_call_id: None,
             created_at: Some(now_ms()),
             id: None,
             parent_id: None,
@@ -72,6 +108,23 @@ impl Message {
         Self {
             role,
             content: parts,
+            tool_calls: None,
+            tool_call_id: None,
+            created_at: Some(now_ms()),
+            id: None,
+            parent_id: None,
+            branch_index: 0,
+        }
+    }
+
+    /// Construct a tool-result message (`role: tool`) responding to a
+    /// specific tool_call by id.
+    pub fn tool_result(tool_call_id: String, body: String) -> Self {
+        Self {
+            role: Role::Tool,
+            content: vec![ContentPart::Text { text: body }],
+            tool_calls: None,
+            tool_call_id: Some(tool_call_id),
             created_at: Some(now_ms()),
             id: None,
             parent_id: None,

@@ -1,0 +1,17 @@
+name = "list_directory"
+description = """
+List the entries in a directory. Returns one line per entry: a `d/` prefix
+for directories or `f/` for files, then the name. Hidden entries (starting
+with a dot) are included. Relative paths resolve against the current
+conversation's working directory.
+"""
+handler = "builtin:list_directory"
+safety = "auto"
+
+[parameters]
+type = "object"
+required = ["path"]
+
+[parameters.properties.path]
+type = "string"
+description = "Directory to list. Absolute or relative to the conversation working_dir."

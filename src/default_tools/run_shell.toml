@@ -1,0 +1,19 @@
+name = "run_shell"
+description = """
+Run a shell command via `sh -c`. Returns the captured stdout and stderr
+along with the exit status. Runs with the current conversation's working
+directory as `cwd`. Output is truncated to 50 KB.
+
+Confirmation is required by default — the user sees the exact command
+before it executes.
+"""
+handler = "builtin:run_shell"
+safety = "confirm"
+
+[parameters]
+type = "object"
+required = ["command"]
+
+[parameters.properties.command]
+type = "string"
+description = "Shell command to run. Passed to `sh -c`."
