@@ -111,6 +111,12 @@ pub struct ChatApp {
     /// `(display_name, ContentPart::ImageUrl)`. Cleared after send_message
     /// builds the user message.
     pending_attachments: Vec<(String, ContentPart)>,
+    /// Per-frame cache of (current_branch_position, total_siblings) per
+    /// message — feeds the ◀ N/M ▶ navigator. Without this we'd hit the
+    /// DB twice per message per frame just to render arrows that change
+    /// almost never. Invalidated by a cheap signature compare.
+    sibling_info_cache: Vec<Option<(usize, usize)>>,
+    sibling_info_signature: u64,
 }
 
 impl ChatApp {
@@ -185,6 +191,8 @@ impl ChatApp {
             reasoning_open: false,
             toast: None,
             pending_attachments: Vec::new(),
+            sibling_info_cache: Vec::new(),
+            sibling_info_signature: 0,
             config,
         };
 
@@ -2293,20 +2301,31 @@ impl eframe::App for ChatApp {
                         let highlight_fill =
                             ui.visuals().selection.bg_fill.linear_multiply(0.25);
 
-                        // Build (current_branch_position, total_siblings) per
-                        // message — used to render the ◀ N/M ▶ navigator.
-                        // None = no siblings or message not yet persisted.
-                        let sibling_info: Vec<Option<(usize, usize)>> = (0..msg_count)
-                            .map(|i| {
-                                let mid = self.messages[i].id?;
-                                let sibs = self.storage.siblings_of(mid);
-                                if sibs.len() <= 1 {
-                                    return None;
-                                }
-                                let pos = sibs.iter().position(|s| s.id == mid)?;
-                                Some((pos, sibs.len()))
-                            })
-                            .collect();
+                        // (current_branch_position, total_siblings) per
+                        // message — feeds the ◀ N/M ▶ navigator. Refreshed
+                        // from the DB only when the active path's id
+                        // signature actually changes (regenerate, edit,
+                        // navigation, send). Without this we'd hit
+                        // siblings_of twice per message every frame just
+                        // to render arrows that almost never move.
+                        let sig = sibling_signature(&self.messages);
+                        if sig != self.sibling_info_signature
+                            || self.sibling_info_cache.len() != msg_count
+                        {
+                            self.sibling_info_cache = (0..msg_count)
+                                .map(|i| {
+                                    let mid = self.messages[i].id?;
+                                    let sibs = self.storage.siblings_of(mid);
+                                    if sibs.len() <= 1 {
+                                        return None;
+                                    }
+                                    let pos = sibs.iter().position(|s| s.id == mid)?;
+                                    Some((pos, sibs.len()))
+                                })
+                                .collect();
+                            self.sibling_info_signature = sig;
+                        }
+                        let sibling_info = &self.sibling_info_cache;
 
                         // We iterate by index to avoid holding a borrow on self.messages
                         // across the body, which needs &mut self for commonmark_cache.
@@ -2673,6 +2692,20 @@ fn sanitize_title(s: &str) -> String {
     } else {
         collapsed
     }
+}
+
+/// Hash of the active path's structural identity (message ids + count).
+/// When this signature is stable, the ◀ N/M ▶ navigator can reuse its
+/// cached `sibling_info` without re-querying the DB. Streaming token
+/// appends don't change ids, so they don't force a rebuild.
+fn sibling_signature(messages: &[Message]) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    messages.len().hash(&mut h);
+    for m in messages {
+        m.id.hash(&mut h);
+    }
+    h.finish()
 }
 
 /// Hash of the live per-conversation settings. Fed to a frame-by-frame dirty

@@ -269,6 +269,15 @@ impl Storage {
     /// without callers threading ids around. Sibling creation (regenerate,
     /// edit) sets `parent_id` explicitly *before* calling save, so the
     /// auto-link doesn't apply there.
+    ///
+    /// **Caller contract**: when relying on auto-linkage, pass a slice that
+    /// includes the conversation's *current active tail* — not just the
+    /// new messages. Both `save_current` (in app.rs) and the test helpers
+    /// pass `&mut self.messages`, which is the active path; this is the
+    /// supported shape. Passing only the new tail will fall back to a
+    /// "highest-position row in the conv" tail query that may parent off
+    /// an unrelated sibling branch if the user navigated away from the
+    /// most-recently-inserted branch.
     pub fn save_messages(
         &self,
         conversation_id: i64,
