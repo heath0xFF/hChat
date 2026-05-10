@@ -1,0 +1,77 @@
+{
+  "cli_version": "0.6.1",
+  "checkpoint_id": "e52a453b1fb3",
+  "session_id": "fa441e48-e5df-4c30-b839-5bce74a8fa59",
+  "strategy": "manual-commit",
+  "created_at": "2026-05-10T23:23:02.051837Z",
+  "branch": "phase-5a-tools",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "Cargo.lock",
+    "Cargo.toml",
+    "src/api.rs",
+    "src/app.rs",
+    "src/default_tools/list_directory.toml",
+    "src/default_tools/read_file.toml",
+    "src/default_tools/run_shell.toml",
+    "src/default_tools/search_files.toml",
+    "src/default_tools/write_file.toml",
+    "src/main.rs",
+    "src/message.rs",
+    "src/storage.rs",
+    "src/tools.rs"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-opus-4-7[1m]",
+  "turn_id": "53c947b7232b",
+  "token_usage": {
+    "input_tokens": 708,
+    "cache_creation_tokens": 1288738,
+    "cache_read_tokens": 159509659,
+    "output_tokens": 291161,
+    "api_call_count": 589
+  },
+  "session_metrics": {
+    "turn_count": 19
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-05-10T23:23:02.016271Z",
+    "agent_lines": 1509,
+    "agent_removed": 10,
+    "human_added": 43,
+    "human_modified": 9,
+    "human_removed": 0,
+    "total_committed": 1561,
+    "total_lines_changed": 1571,
+    "agent_percentage": 96.69000636537237,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 7,
+      "user_lines_removed": 1,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".claude/settings.local.json": 7
+      },
+      "user_removed_per_file": {
+        ".claude/settings.local.json": 1
+      }
+    },
+    {
+      "checkpoint_number": 3,
+      "user_lines_added": 7,
+      "user_lines_removed": 1,
+      "agent_lines_added": 860,
+      "agent_lines_removed": 9,
+      "user_added_per_file": {
+        ".claude/settings.local.json": 7
+      },
+      "user_removed_per_file": {
+        ".claude/settings.local.json": 1
+      }
+    }
+  ]
+}

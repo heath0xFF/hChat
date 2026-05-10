@@ -1,0 +1,37 @@
+{
+  "cli_version": "0.6.1",
+  "checkpoint_id": "e52a453b1fb3",
+  "strategy": "manual-commit",
+  "branch": "phase-5a-tools",
+  "checkpoints_count": 2,
+  "files_touched": [
+    "Cargo.lock",
+    "Cargo.toml",
+    "src/api.rs",
+    "src/app.rs",
+    "src/default_tools/list_directory.toml",
+    "src/default_tools/read_file.toml",
+    "src/default_tools/run_shell.toml",
+    "src/default_tools/search_files.toml",
+    "src/default_tools/write_file.toml",
+    "src/main.rs",
+    "src/message.rs",
+    "src/storage.rs",
+    "src/tools.rs"
+  ],
+  "sessions": [
+    {
+      "metadata": "/e5/2a453b1fb3/0/metadata.json",
+      "transcript": "/e5/2a453b1fb3/0/full.jsonl",
+      "content_hash": "/e5/2a453b1fb3/0/content_hash.txt",
+      "prompt": "/e5/2a453b1fb3/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 708,
+    "cache_creation_tokens": 1288738,
+    "cache_read_tokens": 159509659,
+    "output_tokens": 291161,
+    "api_call_count": 589
+  }
+}
