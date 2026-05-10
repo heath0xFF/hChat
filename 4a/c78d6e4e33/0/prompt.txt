@@ -88,3 +88,9 @@ thread caused non-unwinding panic. aborting.
 ---
 
 how does hchat calculate tokens?
+
+---
+
+ok cool. the udpates you made allowed me to run cargo run on the phase 4 branch.. add a follow up commit. i think we just roll forward with v0.8.0 
+
+also let's update the readme to reflect these big changes.
