@@ -5,6 +5,7 @@ mod config;
 mod markdown;
 mod message;
 mod storage;
+mod tools;
 
 fn main() -> eframe::Result<()> {
     let config = config::Config::load();

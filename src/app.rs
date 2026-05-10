@@ -111,6 +111,30 @@ pub struct ChatApp {
     /// `(display_name, ContentPart::ImageUrl)`. Cleared after send_message
     /// builds the user message.
     pending_attachments: Vec<(String, ContentPart)>,
+    /// Working directory passed to tool handlers in this conversation.
+    /// Per-conversation override; defaults to the user's home dir on a
+    /// fresh chat. Persists alongside the rest of `ConversationSettings`.
+    working_dir: String,
+    /// Tools loaded from `~/.config/hchat/tools/` at startup. Sent with
+    /// every chat request so the model knows what it can call. Reload via
+    /// re-launch (Phase 5a; a /tools-reload command can come later).
+    loaded_tools: Vec<crate::tools::ToolDef>,
+    /// Tool calls queued from the most recent assistant turn that haven't
+    /// been executed yet. Drained left-to-right by `process_pending_tool_calls`.
+    pending_tool_calls: Vec<crate::message::ToolCall>,
+    /// One tool call awaiting user click on the approval card. Set when
+    /// the queue head is `safety = "confirm"` and the user hasn't
+    /// pre-approved this tool name. The execution loop is paused while
+    /// this is `Some`.
+    pending_approval: Option<crate::message::ToolCall>,
+    /// Tool names the user pre-approved for the rest of this session via
+    /// the "Allow all in this conv" button. Not persisted — fresh per
+    /// app launch; per the design, doesn't mutate the TOML safety field.
+    auto_approved_tools: std::collections::HashSet<String>,
+    /// How many tool-then-restream cycles we've completed for the current
+    /// user turn. Hard cap (see `MAX_TOOL_ITERATIONS`) prevents a runaway
+    /// model from looping forever. Reset on the next `send_message`.
+    tool_iterations: u32,
     /// Per-frame cache of (current_branch_position, total_siblings) per
     /// message — feeds the ◀ N/M ▶ navigator. Without this we'd hit the
     /// DB twice per message per frame just to render arrows that change
@@ -191,6 +215,16 @@ impl ChatApp {
             reasoning_open: false,
             toast: None,
             pending_attachments: Vec::new(),
+            working_dir: default_working_dir(),
+            loaded_tools: {
+                let dir = crate::tools::user_tools_dir();
+                crate::tools::seed_defaults_if_empty(&dir);
+                crate::tools::load_from_dir(&dir)
+            },
+            pending_tool_calls: Vec::new(),
+            pending_approval: None,
+            auto_approved_tools: std::collections::HashSet::new(),
+            tool_iterations: 0,
             sibling_info_cache: Vec::new(),
             sibling_info_signature: 0,
             config,
@@ -253,6 +287,7 @@ impl ChatApp {
             self.stop_streaming();
         }
         self.save_current();
+        self.clear_tool_execution_state();
         self.messages.clear();
         self.current_conversation_id = None;
         self.error = None;
@@ -349,6 +384,7 @@ impl ChatApp {
             self.stop_streaming();
         }
         self.save_current();
+        self.clear_tool_execution_state();
         self.messages = self.storage.load_messages(id);
         self.current_conversation_id = Some(id);
         self.error = None;
@@ -372,6 +408,7 @@ impl ChatApp {
             if self.streaming {
                 self.stop_streaming();
             }
+            self.clear_tool_execution_state();
             self.messages.clear();
             self.current_conversation_id = None;
             self.editing_message = None;
@@ -407,6 +444,7 @@ impl ChatApp {
             presence_penalty: self.presence_penalty,
             stop_sequences: self.stop_sequences.clone(),
             endpoint: Some(self.base_url.clone()),
+            working_dir: Some(self.working_dir.clone()),
         }
     }
 
@@ -446,6 +484,7 @@ impl ChatApp {
         } else {
             s.stop_sequences
         };
+        self.working_dir = s.working_dir.unwrap_or_else(default_working_dir);
         // Mark settings as freshly loaded so the dirty-check below doesn't
         // immediately re-save what we just read.
         self.settings_signature = settings_signature(&self.current_settings_snapshot());
@@ -462,6 +501,7 @@ impl ChatApp {
         self.frequency_penalty = self.config.frequency_penalty;
         self.presence_penalty = self.config.presence_penalty;
         self.stop_sequences = self.config.stop_sequences.clone();
+        self.working_dir = default_working_dir();
         self.settings_signature = settings_signature(&self.current_settings_snapshot());
     }
 
@@ -753,8 +793,15 @@ impl ChatApp {
     fn send_message(&mut self) {
         let raw = self.input.trim().to_string();
         // Allow send when there's text OR at least one attachment (image-only
-        // turns are valid for vision models).
-        if (raw.is_empty() && self.pending_attachments.is_empty()) || self.streaming {
+        // turns are valid for vision models). Block sends while a tool call
+        // is parked for approval or queued — letting the user send a new
+        // turn would orphan the parked call's `tool_call_id`, breaking the
+        // assistant↔tool message chain on the next API request.
+        if (raw.is_empty() && self.pending_attachments.is_empty())
+            || self.streaming
+            || self.pending_approval.is_some()
+            || !self.pending_tool_calls.is_empty()
+        {
             return;
         }
 
@@ -799,6 +846,9 @@ impl ChatApp {
             parts.push(part);
         }
         self.messages.push(Message::from_parts(Role::User, parts));
+        // New user turn — reset the tool iteration budget. The previous
+        // assistant turn may have used some of it; that turn is over.
+        self.tool_iterations = 0;
         self.start_streaming();
     }
 
@@ -906,6 +956,11 @@ impl ChatApp {
             Some(self.stop_sequences.clone())
         };
 
+        let tools = if self.loaded_tools.is_empty() {
+            None
+        } else {
+            Some(crate::tools::to_api_shape(&self.loaded_tools))
+        };
         let params = ChatParams {
             base_url,
             model,
@@ -917,6 +972,7 @@ impl ChatApp {
             presence_penalty: self.presence_penalty,
             stop_sequences: stop,
             api_key,
+            tools,
         };
         self.runtime
             .spawn(async move { api::stream_chat(params, tx, cancel) });
@@ -940,6 +996,10 @@ impl ChatApp {
         if self.streaming || self.models.is_empty() {
             return;
         }
+        // Treat regenerate as a fresh attempt: reset the tool iteration
+        // budget so the new branch isn't capped by what the previous
+        // assistant turn burned through.
+        self.tool_iterations = 0;
         let Some(last) = self.messages.last() else {
             return;
         };
@@ -994,6 +1054,9 @@ impl ChatApp {
         if self.streaming || index >= self.messages.len() {
             return;
         }
+        // Edit creates a fresh user-driven turn — reset the iteration
+        // budget so the new branch starts with the full cap available.
+        self.tool_iterations = 0;
         let content = self.edit_buffer.trim().to_string();
         if content.is_empty() {
             return;
@@ -1238,6 +1301,18 @@ impl ChatApp {
                         }
                         self.last_usage = Some(usage);
                     }
+                    StreamEvent::ToolCalls(calls) => {
+                        // Attach to the streaming assistant message. The
+                        // execution loop kicks in on Done — running
+                        // mid-stream would race with later content tokens
+                        // (some providers send a closing content delta
+                        // after the tool_calls).
+                        if let Some(last) = self.messages.last_mut()
+                            && last.role == Role::Assistant
+                        {
+                            last.tool_calls = Some(calls);
+                        }
+                    }
                     StreamEvent::Done => {
                         // If reasoning was streaming and the provider never sent
                         // a content delta, close the <think> tag explicitly so
@@ -1290,7 +1365,179 @@ impl ChatApp {
 
         if just_finished_streaming && !self.messages.is_empty() {
             self.save_current();
+            // After persisting the assistant turn (which may carry
+            // tool_calls), start draining the queue. If any call needs
+            // user approval, we'll park in `pending_approval`; otherwise
+            // we'll execute everything and re-fire start_streaming.
+            self.kick_off_tool_execution();
         }
+    }
+
+    /// Reset all tool-execution state. Called when the user switches/
+    /// creates/deletes a conversation — without this a parked approval
+    /// card from one conv would still be resolvable from another, pushing
+    /// a tool_result into the wrong message chain.
+    fn clear_tool_execution_state(&mut self) {
+        self.pending_approval = None;
+        self.pending_tool_calls.clear();
+        self.tool_iterations = 0;
+        // `auto_approved_tools` is documented as per-conversation in the
+        // approval card hover text — clear it on switch so the user's
+        // "approve all" decision in chat A doesn't carry into chat B.
+        self.auto_approved_tools.clear();
+    }
+
+    /// If the just-finished assistant turn emitted tool_calls and we're
+    /// under the iteration cap, queue them and start processing. No-op
+    /// otherwise.
+    fn kick_off_tool_execution(&mut self) {
+        let calls = self
+            .messages
+            .last()
+            .and_then(|m| m.tool_calls.clone())
+            .unwrap_or_default();
+        if calls.is_empty() {
+            return;
+        }
+        if self.tool_iterations >= MAX_TOOL_ITERATIONS {
+            self.show_toast(format!(
+                "Tool iteration cap ({MAX_TOOL_ITERATIONS}) reached \u{2014} stopping"
+            ));
+            return;
+        }
+        self.pending_tool_calls = calls;
+        self.process_pending_tool_calls();
+    }
+
+    /// Drain auto-safety calls (and any pre-approved confirm calls) from
+    /// the queue. Park the first confirm call we hit in
+    /// `pending_approval` and return; the UI's approval card will resume
+    /// us via `resolve_pending_approval`.
+    fn process_pending_tool_calls(&mut self) {
+        while let Some(call) = self.pending_tool_calls.first().cloned() {
+            let safety = self.safety_for(&call.function.name);
+            if safety == crate::tools::Safety::Auto
+                || self.auto_approved_tools.contains(&call.function.name)
+            {
+                self.pending_tool_calls.remove(0);
+                let body = self.execute_tool_call(&call);
+                self.messages
+                    .push(Message::tool_result(call.id.clone(), body));
+            } else {
+                // Park for user approval.
+                self.pending_approval = Some(self.pending_tool_calls.remove(0));
+                return;
+            }
+        }
+        // Queue empty — re-stream so the model sees the tool results.
+        self.tool_iterations += 1;
+        self.start_streaming();
+    }
+
+    /// Resolve the parked approval card: `Approve` runs the call and
+    /// resumes the queue; `ApproveAll` adds the tool name to the
+    /// per-session allowlist before doing the same; `Reject` pushes a
+    /// "rejected by user" tool result and resumes.
+    fn resolve_pending_approval(&mut self, decision: ApprovalDecision) {
+        let Some(call) = self.pending_approval.take() else {
+            return;
+        };
+        let body = match decision {
+            ApprovalDecision::Approve => self.execute_tool_call(&call),
+            ApprovalDecision::ApproveAll => {
+                self.auto_approved_tools.insert(call.function.name.clone());
+                self.execute_tool_call(&call)
+            }
+            ApprovalDecision::Reject => "Rejected by user.".to_string(),
+        };
+        self.messages
+            .push(Message::tool_result(call.id.clone(), body));
+        self.process_pending_tool_calls();
+    }
+
+    /// Render the parked tool-approval card if one's pending. Returns the
+    /// user's decision so the caller can apply it without dragging an
+    /// extra `&mut self` borrow through the UI closure.
+    fn render_approval_card(&self, ui: &mut egui::Ui) -> Option<ApprovalDecision> {
+        let call = self.pending_approval.as_ref()?;
+        let mut decision: Option<ApprovalDecision> = None;
+        egui::Frame::group(ui.style())
+            .fill(ui.visuals().selection.bg_fill.linear_multiply(0.15))
+            .inner_margin(egui::Margin::same(10))
+            .show(ui, |ui| {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("⚠ Tool requires approval").strong());
+                    ui.weak(format!("({})", call.function.name));
+                });
+                // Pretty-print arguments JSON. Falls back to the raw string
+                // if the model emitted invalid JSON (rare, but possible
+                // during streaming if the loop fires before a closing brace).
+                let pretty = serde_json::from_str::<serde_json::Value>(&call.function.arguments)
+                    .and_then(|v| serde_json::to_string_pretty(&v))
+                    .unwrap_or_else(|_| call.function.arguments.clone());
+                egui::ScrollArea::vertical()
+                    .max_height(160.0)
+                    .show(ui, |ui| {
+                        ui.add(
+                            egui::TextEdit::multiline(&mut pretty.as_str())
+                                .code_editor()
+                                .desired_width(f32::INFINITY)
+                                .interactive(false),
+                        );
+                    });
+                ui.horizontal(|ui| {
+                    if ui.button("Approve").clicked() {
+                        decision = Some(ApprovalDecision::Approve);
+                    }
+                    if ui
+                        .button("Approve all in this conv")
+                        .on_hover_text("Skip the prompt for any future call to this tool name in this conversation")
+                        .clicked()
+                    {
+                        decision = Some(ApprovalDecision::ApproveAll);
+                    }
+                    if ui.button("Reject").clicked() {
+                        decision = Some(ApprovalDecision::Reject);
+                    }
+                });
+            });
+        decision
+    }
+
+    /// Look up the configured safety for a tool by name. Defaults to
+    /// `Confirm` if the tool isn't loaded — refusing to silently auto-
+    /// execute a tool the user hasn't installed feels safer than the
+    /// alternative.
+    fn safety_for(&self, name: &str) -> crate::tools::Safety {
+        self.loaded_tools
+            .iter()
+            .find(|d| d.name == name)
+            .map(|d| d.safety)
+            .unwrap_or(crate::tools::Safety::Confirm)
+    }
+
+    /// Run one tool call against its matching ToolDef. Returns the
+    /// stringified result (or an error message); never panics.
+    fn execute_tool_call(&self, call: &crate::message::ToolCall) -> String {
+        use crate::tools::{Handler, run_builtin, run_shell_tool};
+        let def = match self
+            .loaded_tools
+            .iter()
+            .find(|d| d.name == call.function.name)
+        {
+            Some(d) => d,
+            None => return format!("error: unknown tool '{}'", call.function.name),
+        };
+        let args: serde_json::Value = match serde_json::from_str(&call.function.arguments) {
+            Ok(v) => v,
+            Err(e) => return format!("error: invalid arguments JSON: {e}"),
+        };
+        let wd = std::path::Path::new(&self.working_dir);
+        let result = match &def.handler {
+            Handler::Builtin(b) => run_builtin(&b.0, &args, wd),
+            Handler::Shell { shell } => run_shell_tool(shell, &args, wd),
+        };
+        result.unwrap_or_else(|e| format!("error: {e}"))
     }
 
     pub fn reload_config(&mut self, ctx: &egui::Context) {
@@ -1661,6 +1908,17 @@ impl eframe::App for ChatApp {
                         .desired_rows(2)
                         .desired_width(f32::INFINITY),
                 );
+                ui.horizontal(|ui| {
+                    ui.label("Working dir:");
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.working_dir)
+                            .hint_text("~/projects/foo")
+                            .desired_width(360.0),
+                    )
+                    .on_hover_text(
+                        "Tools (read_file, run_shell, etc.) resolve relative paths against this directory",
+                    );
+                });
                 ui.horizontal(|ui| {
                     ui.label("Temperature:");
                     ui.add(egui::Slider::new(&mut self.temperature, 0.0..=2.0).step_by(0.1));
@@ -2116,6 +2374,14 @@ impl eframe::App for ChatApp {
                 ui.colored_label(egui::Color32::RED, format!("Error: {err}"));
             }
 
+            // Tool-call approval card: rendered above the input area when
+            // a confirm-safety call is parked. The execution loop is paused
+            // until the user clicks one of the three buttons.
+            let approval_decision = self.render_approval_card(ui);
+            if let Some(d) = approval_decision {
+                self.resolve_pending_approval(d);
+            }
+
             // Pending attachment chips: render one row per attachment with a
             // remove (✕) button. Two-pass to avoid mutating during iteration.
             if !self.pending_attachments.is_empty() {
@@ -2330,17 +2596,19 @@ impl eframe::App for ChatApp {
                         // We iterate by index to avoid holding a borrow on self.messages
                         // across the body, which needs &mut self for commonmark_cache.
                         for i in 0..msg_count {
-                            let (role, content_clone, created_at);
+                            let (role, content_clone, created_at, tool_calls_snap);
                             {
                                 let msg = &self.messages[i];
                                 role = msg.role.clone();
                                 content_clone = msg.text_str();
                                 created_at = msg.created_at;
+                                tool_calls_snap = msg.tool_calls.clone();
                             }
                             let (prefix, color) = match role {
                                 Role::User => ("You", egui::Color32::from_rgb(100, 180, 255)),
                                 Role::Assistant => ("AI", egui::Color32::from_rgb(100, 255, 150)),
                                 Role::System => ("System", egui::Color32::GRAY),
+                                Role::Tool => ("Tool", egui::Color32::from_rgb(180, 140, 220)),
                             };
 
                             let matches_find = match_flags.get(i).copied().unwrap_or(false);
@@ -2425,8 +2693,20 @@ impl eframe::App for ChatApp {
                                     });
                                 } else if role == Role::Assistant && !content_clone.is_empty() {
                                     render_assistant_message(ui, cache, i, &content_clone);
+                                } else if role == Role::Tool {
+                                    render_tool_result(ui, i, &content_clone);
                                 } else {
                                     ui.label(&content_clone);
+                                }
+                                // Tool calls (assistant turns that invoked
+                                // one or more tools) render as a compact
+                                // collapsible block beneath the assistant
+                                // text.
+                                if let Some(calls) = tool_calls_snap.as_ref()
+                                    && role == Role::Assistant
+                                    && !calls.is_empty()
+                                {
+                                    render_tool_calls(ui, i, calls);
                                 }
                                 act
                             };
@@ -2544,6 +2824,21 @@ impl eframe::App for ChatApp {
             ctx.request_repaint_after(remaining);
         }
     }
+}
+
+/// Hard cap on tool-then-restream cycles per user turn. A model that keeps
+/// calling tools forever will hit this and stop, surfacing a toast. Eight
+/// is empirically generous — typical agentic flows (read → grep → read →
+/// edit → run tests → read again → done) come in under that.
+const MAX_TOOL_ITERATIONS: u32 = 8;
+
+/// User decision on a parked tool approval card. `ApproveAll` adds the
+/// tool name to a per-session allowlist so future calls of the same tool
+/// in this conversation don't prompt again.
+enum ApprovalDecision {
+    Approve,
+    ApproveAll,
+    Reject,
 }
 
 enum MessageAction {
@@ -2694,6 +2989,15 @@ fn sanitize_title(s: &str) -> String {
     }
 }
 
+/// Default working directory for tool calls in a fresh conversation. Falls
+/// back to `.` if the home dir lookup somehow fails — we still want a
+/// usable path rather than crashing on an unwrap.
+fn default_working_dir() -> String {
+    dirs::home_dir()
+        .map(|p| p.to_string_lossy().into_owned())
+        .unwrap_or_else(|| ".".to_string())
+}
+
 /// Hash of the active path's structural identity (message ids + count).
 /// When this signature is stable, the ◀ N/M ▶ navigator can reuse its
 /// cached `sibling_info` without re-querying the DB. Streaming token
@@ -2725,6 +3029,7 @@ fn settings_signature(s: &ConversationSettings) -> u64 {
     s.presence_penalty.map(|v| v.to_bits()).hash(&mut h);
     s.stop_sequences.hash(&mut h);
     s.endpoint.hash(&mut h);
+    s.working_dir.hash(&mut h);
     h.finish()
 }
 
@@ -2807,6 +3112,64 @@ fn format_timestamp(ms: i64) -> String {
     let m = (secs / 60) % 60;
     let s = secs % 60;
     format!("{h:02}:{m:02}:{s:02} UTC")
+}
+
+/// Render the tool_calls block under an assistant message. Each call gets
+/// a collapsing header showing `name(args summary)`; opening it shows the
+/// pretty-printed JSON arguments. Kept compact so a multi-call turn doesn't
+/// dominate the scroll.
+fn render_tool_calls(ui: &mut egui::Ui, msg_idx: usize, calls: &[crate::message::ToolCall]) {
+    for (j, call) in calls.iter().enumerate() {
+        // Short summary for the header: tool name + args truncated to a
+        // single short line. The full pretty-printed JSON is in the body.
+        let arg_summary = single_line_summary(&call.function.arguments, 60);
+        let header = format!("🔧 {}({})", call.function.name, arg_summary);
+        egui::CollapsingHeader::new(header)
+            .id_salt(("tool_call", msg_idx, j))
+            .default_open(false)
+            .show(ui, |ui| {
+                let pretty = serde_json::from_str::<serde_json::Value>(&call.function.arguments)
+                    .and_then(|v| serde_json::to_string_pretty(&v))
+                    .unwrap_or_else(|_| call.function.arguments.clone());
+                ui.add(
+                    egui::TextEdit::multiline(&mut pretty.as_str())
+                        .code_editor()
+                        .desired_width(f32::INFINITY)
+                        .interactive(false),
+                );
+            });
+    }
+}
+
+/// Render a Role::Tool message body as a collapsible "Tool result" block.
+/// Closed by default — tool output (file dumps, shell stdout) is verbose
+/// and shouldn't clutter the chat scroll.
+fn render_tool_result(ui: &mut egui::Ui, msg_idx: usize, body: &str) {
+    let preview = single_line_summary(body, 80);
+    let header = format!("📤 Tool result — {preview}");
+    egui::CollapsingHeader::new(header)
+        .id_salt(("tool_result", msg_idx))
+        .default_open(false)
+        .show(ui, |ui| {
+            ui.add(
+                egui::TextEdit::multiline(&mut body.to_string().as_str())
+                    .code_editor()
+                    .desired_width(f32::INFINITY)
+                    .interactive(false),
+            );
+        });
+}
+
+/// Strip newlines + collapse whitespace + truncate. Used for the one-line
+/// summary in tool-call / tool-result headers so they stay tidy.
+fn single_line_summary(s: &str, max: usize) -> String {
+    let collapsed: String = s.split_whitespace().collect::<Vec<_>>().join(" ");
+    if collapsed.chars().count() > max {
+        let truncated: String = collapsed.chars().take(max).collect();
+        format!("{truncated}…")
+    } else {
+        collapsed
+    }
 }
 
 /// Render an assistant message: walk the segment list, rendering prose with

@@ -1,0 +1,21 @@
+name = "search_files"
+description = """
+Recursively search files under a path for lines matching a regular expression.
+Returns up to 200 matching lines, each formatted as `path:line_number: line`.
+Skips binary files and any directory whose name starts with a dot
+(`.git`, `node_modules`-style hidden trees).
+"""
+handler = "builtin:search_files"
+safety = "auto"
+
+[parameters]
+type = "object"
+required = ["pattern", "path"]
+
+[parameters.properties.pattern]
+type = "string"
+description = "Regular expression to match against each line."
+
+[parameters.properties.path]
+type = "string"
+description = "Root directory to search under. Absolute or relative to the conversation working_dir."

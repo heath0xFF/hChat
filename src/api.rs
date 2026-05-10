@@ -1,4 +1,4 @@
-use crate::message::Message;
+use crate::message::{Message, ToolCall, ToolCallFunction};
 use futures_util::StreamExt;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -59,6 +59,12 @@ struct ChatRequest {
     presence_penalty: Option<f32>,
     #[serde(skip_serializing_if = "Option::is_none", rename = "stop")]
     stop_sequences: Option<Vec<String>>,
+    /// OpenAI tools array. Each entry is
+    /// `{"type":"function","function":{"name","description","parameters"}}`.
+    /// Stored as `serde_json::Value` so we don't couple the wire shape into
+    /// our type system — `tools.rs` builds these from `ToolDef` at send time.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tools: Option<Vec<serde_json::Value>>,
 }
 
 #[derive(Deserialize)]
@@ -88,6 +94,31 @@ struct Delta {
     /// separate `reasoning` field for chain-of-thought. We surface it as a
     /// `Reasoning` event so the UI can show it collapsed.
     reasoning: Option<String>,
+    /// Tool call deltas — OpenAI streams tool_calls piecewise across chunks
+    /// indexed by slot. We accumulate them here in api.rs and emit a single
+    /// `ToolCalls` event with the assembled list at end-of-stream.
+    tool_calls: Option<Vec<ToolCallDelta>>,
+}
+
+#[derive(Deserialize)]
+struct ToolCallDelta {
+    /// Slot index — multiple tool calls in one assistant turn each get a
+    /// stable slot, even though their fields trickle in across chunks.
+    index: usize,
+    id: Option<String>,
+    /// Always `"function"` today; we don't surface it because there's only
+    /// one variant. Allow-dead so the deserializer accepts the field.
+    #[allow(dead_code)]
+    #[serde(rename = "type")]
+    call_type: Option<String>,
+    function: Option<FunctionDelta>,
+}
+
+#[derive(Deserialize)]
+struct FunctionDelta {
+    name: Option<String>,
+    /// Arguments stream as string fragments — concatenate to form valid JSON.
+    arguments: Option<String>,
 }
 
 pub enum StreamEvent {
@@ -96,6 +127,11 @@ pub enum StreamEvent {
     /// `Token` so the UI can render it differently. For inline `<think>` tags
     /// inside content, the UI parses the assembled text itself.
     Reasoning(String),
+    /// The complete list of tool calls the model emitted in this turn,
+    /// assembled from per-chunk deltas. Sent before `Done` if any tool
+    /// calls happened. The app assigns these to the streaming assistant
+    /// message, then runs them after `Done`.
+    ToolCalls(Vec<ToolCall>),
     Done,
     Error(String),
     UsageInfo(Usage),
@@ -188,6 +224,8 @@ pub struct ChatParams {
     pub presence_penalty: Option<f32>,
     pub stop_sequences: Option<Vec<String>>,
     pub api_key: Option<String>,
+    /// OpenAI tools array. None = no tool calling for this turn.
+    pub tools: Option<Vec<serde_json::Value>>,
 }
 
 pub fn stream_chat(
@@ -207,6 +245,7 @@ pub fn stream_chat(
             presence_penalty,
             stop_sequences,
             api_key,
+            tools,
         } = params;
         let client = match Client::builder().connect_timeout(CONNECT_TIMEOUT).build() {
             Ok(c) => c,
@@ -238,6 +277,7 @@ pub fn stream_chat(
             frequency_penalty,
             presence_penalty,
             stop_sequences,
+            tools,
         };
 
         let mut request = client.post(&url).json(&req);
@@ -286,14 +326,23 @@ pub fn stream_chat(
         // Use a byte buffer to handle UTF-8 sequences split across chunks
         let mut raw_buf: Vec<u8> = Vec::new();
 
+        // Tool call accumulator: index → (id, name, arguments-so-far). We
+        // assemble per-slot across deltas and emit a single ToolCalls event
+        // before Done. Using a Vec<Option<_>> keyed by index handles sparse
+        // / out-of-order deltas without allocating a HashMap for what's
+        // typically 1–3 calls.
+        let mut tool_acc: Vec<Option<(Option<String>, String, String)>> = Vec::new();
+
         loop {
             tokio::select! {
                 _ = cancel.cancelled() => {
+                    flush_tool_calls(&mut tool_acc, &tx);
                     let _ = tx.send(StreamEvent::Done);
                     return;
                 }
                 chunk = stream.next() => {
                     let Some(chunk) = chunk else {
+                        flush_tool_calls(&mut tool_acc, &tx);
                         let _ = tx.send(StreamEvent::Done);
                         return;
                     };
@@ -342,6 +391,7 @@ pub fn stream_chat(
                         };
 
                         if data == "[DONE]" {
+                            flush_tool_calls(&mut tool_acc, &tx);
                             let _ = tx.send(StreamEvent::Done);
                             return;
                         }
@@ -368,6 +418,11 @@ pub fn stream_chat(
                                         {
                                             let _ = tx.send(StreamEvent::Token(content));
                                         }
+                                        if let Some(tcds) = delta.tool_calls {
+                                            for tcd in tcds {
+                                                accumulate_tool_call(&mut tool_acc, tcd);
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -384,6 +439,68 @@ pub fn stream_chat(
             }
         }
     });
+}
+
+/// Append a streaming `ToolCallDelta` into the accumulator. The accumulator
+/// is keyed by the slot `index` so out-of-order deltas across chunks land
+/// in the right slot. `id` and `name` arrive once each (usually in the
+/// first delta for a slot); `arguments` is concatenated piecewise.
+fn accumulate_tool_call(
+    acc: &mut Vec<Option<(Option<String>, String, String)>>,
+    d: ToolCallDelta,
+) {
+    while acc.len() <= d.index {
+        acc.push(None);
+    }
+    let slot = acc[d.index].get_or_insert_with(|| (None, String::new(), String::new()));
+    if let Some(id) = d.id {
+        slot.0 = Some(id);
+    }
+    if let Some(f) = d.function {
+        if let Some(name) = f.name {
+            slot.1 = name;
+        }
+        if let Some(args) = f.arguments {
+            slot.2.push_str(&args);
+        }
+    }
+}
+
+/// Drain the accumulator into a final `ToolCalls` event. Slots missing an
+/// id are dropped (and logged) — without an id we can't match a result
+/// back. No-op if no calls were accumulated, so emitting unconditionally
+/// before Done is safe.
+fn flush_tool_calls(
+    acc: &mut Vec<Option<(Option<String>, String, String)>>,
+    tx: &mpsc::UnboundedSender<StreamEvent>,
+) {
+    let calls: Vec<ToolCall> = acc
+        .drain(..)
+        .enumerate()
+        .filter_map(|(slot_idx, slot)| {
+            let (id, name, args) = slot?;
+            let Some(id) = id else {
+                // The model thinks it called this tool; we'd be telling it
+                // nothing came back. Surface a diagnostic so the dropped
+                // call is at least debuggable.
+                eprintln!(
+                    "tool_call slot {slot_idx} ('{name}') arrived without an id — dropping"
+                );
+                return None;
+            };
+            Some(ToolCall {
+                id,
+                call_type: "function".to_string(),
+                function: ToolCallFunction {
+                    name,
+                    arguments: args,
+                },
+            })
+        })
+        .collect();
+    if !calls.is_empty() {
+        let _ = tx.send(StreamEvent::ToolCalls(calls));
+    }
 }
 
 /// Find all newline positions in a string slice

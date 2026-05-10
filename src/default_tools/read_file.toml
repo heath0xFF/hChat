@@ -1,0 +1,24 @@
+name = "read_file"
+description = """
+Read the contents of a file. Returns up to 100 KB of text. For larger files,
+use `offset` and `limit` to read a slice. Relative paths resolve against the
+current conversation's working directory.
+"""
+handler = "builtin:read_file"
+safety = "auto"
+
+[parameters]
+type = "object"
+required = ["path"]
+
+[parameters.properties.path]
+type = "string"
+description = "Path to the file. Absolute or relative to the conversation working_dir."
+
+[parameters.properties.offset]
+type = "integer"
+description = "Optional. 1-indexed line number to start reading from."
+
+[parameters.properties.limit]
+type = "integer"
+description = "Optional. Maximum number of lines to read."

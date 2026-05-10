@@ -1688,6 +1688,7 @@ dependencies = [
  "egui_commonmark",
  "font-kit",
  "futures-util",
+ "regex",
  "reqwest",
  "rusqlite",
  "serde",
