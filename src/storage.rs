@@ -193,44 +193,98 @@ impl Storage {
         }
     }
 
+    /// Incremental save: messages with `id = None` are INSERTed (and have
+    /// their assigned rowid written back into the struct via the caller's
+    /// `&mut`); messages with `id = Some` are UPDATEd in place. This
+    /// preserves branch history — the previous delete-and-reinsert pattern
+    /// would have wiped sibling branches every save.
+    ///
+    /// **Auto-linkage**: a new message (id=None) with no explicit parent_id
+    /// links to the immediately preceding message in the slice. This makes
+    /// normal turn appends ("user push then assistant push") just work
+    /// without callers threading ids around. Sibling creation (regenerate,
+    /// edit) sets `parent_id` explicitly *before* calling save, so the
+    /// auto-link doesn't apply there.
     pub fn save_messages(
         &self,
         conversation_id: i64,
-        messages: &[Message],
+        messages: &mut [Message],
     ) -> Result<(), String> {
-        // Use a transaction so delete + re-insert is atomic
         let tx = self
             .conn
             .unchecked_transaction()
             .map_err(|e| format!("Failed to start transaction: {e}"))?;
 
-        tx.execute(
-            "DELETE FROM messages WHERE conversation_id = ?1",
-            params![conversation_id],
-        )
-        .map_err(|e| format!("Failed to clear messages: {e}"))?;
+        // Find the highest existing position so new inserts append rather
+        // than collide with existing rows. Position is a tiebreaker for the
+        // legacy load path and a stable insertion order.
+        let mut next_position: i64 = tx
+            .query_row(
+                "SELECT COALESCE(MAX(position), -1) FROM messages WHERE conversation_id = ?1",
+                params![conversation_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(-1)
+            + 1;
 
-        {
-            let mut stmt = tx
-                .prepare("INSERT INTO messages (conversation_id, role, content, position, created_at) VALUES (?1, ?2, ?3, ?4, ?5)")
-                .map_err(|e| format!("Failed to prepare insert: {e}"))?;
-
-            for (i, msg) in messages.iter().enumerate() {
-                let role_str = match msg.role {
-                    Role::System => "system",
-                    Role::User => "user",
-                    Role::Assistant => "assistant",
-                };
-                let content_json = serde_json::to_string(&msg.content)
-                    .map_err(|e| format!("Failed to encode content: {e}"))?;
-                stmt.execute(params![
-                    conversation_id,
-                    role_str,
-                    content_json,
-                    i,
-                    msg.created_at
-                ])
-                .map_err(|e| format!("Failed to insert message: {e}"))?;
+        let mut prev_id: Option<i64> = None;
+        for msg in messages.iter_mut() {
+            let role_str = match msg.role {
+                Role::System => "system",
+                Role::User => "user",
+                Role::Assistant => "assistant",
+            };
+            let content_json = serde_json::to_string(&msg.content)
+                .map_err(|e| format!("Failed to encode content: {e}"))?;
+            match msg.id {
+                Some(id) => {
+                    // Streaming append on the assistant message updates
+                    // content frequently; parent_id and branch_index never
+                    // change after insert, so don't touch them.
+                    tx.execute(
+                        "UPDATE messages SET content = ?1, created_at = ?2 WHERE id = ?3",
+                        params![content_json, msg.created_at, id],
+                    )
+                    .map_err(|e| format!("Failed to update message: {e}"))?;
+                    prev_id = Some(id);
+                }
+                None => {
+                    // Auto-link: if the caller didn't set parent_id, fall
+                    // back to the previous message in the slice (or the
+                    // conversation's existing tail when this is the first
+                    // entry to be inserted in a turn).
+                    if msg.parent_id.is_none() {
+                        msg.parent_id = prev_id.or_else(|| {
+                            tx.query_row(
+                                "SELECT id FROM messages
+                                 WHERE conversation_id = ?1
+                                 ORDER BY position DESC LIMIT 1",
+                                params![conversation_id],
+                                |row| row.get::<_, i64>(0),
+                            )
+                            .ok()
+                        });
+                    }
+                    tx.execute(
+                        "INSERT INTO messages
+                         (conversation_id, role, content, position, parent_id, branch_index, created_at)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                        params![
+                            conversation_id,
+                            role_str,
+                            content_json,
+                            next_position,
+                            msg.parent_id,
+                            msg.branch_index,
+                            msg.created_at,
+                        ],
+                    )
+                    .map_err(|e| format!("Failed to insert message: {e}"))?;
+                    let new_id = tx.last_insert_rowid();
+                    msg.id = Some(new_id);
+                    prev_id = Some(new_id);
+                    next_position += 1;
+                }
             }
         }
 
@@ -240,47 +294,266 @@ impl Storage {
         )
         .map_err(|e| format!("Failed to update timestamp: {e}"))?;
 
-        // Don't swallow commit failures: a failed commit means the user thinks
-        // their conversation persisted when SQLite rejected it (disk full,
-        // SQLITE_BUSY past timeout, etc.). The caller surfaces this via the
-        // app's error banner.
         tx.commit().map_err(|e| format!("Failed to commit: {e}"))
     }
 
+    /// Compute the next branch_index for a new sibling under `parent_id` in
+    /// the given conversation. Returns 0 if the parent has no children yet.
+    pub fn next_branch_index(&self, conversation_id: i64, parent_id: Option<i64>) -> i64 {
+        // SQL NULL doesn't compare equal with `=`, so use IS for the root
+        // branch case (parent_id IS NULL).
+        let max: i64 = match parent_id {
+            Some(pid) => self
+                .conn
+                .query_row(
+                    "SELECT COALESCE(MAX(branch_index), -1) FROM messages
+                     WHERE conversation_id = ?1 AND parent_id = ?2",
+                    params![conversation_id, pid],
+                    |row| row.get(0),
+                )
+                .unwrap_or(-1),
+            None => self
+                .conn
+                .query_row(
+                    "SELECT COALESCE(MAX(branch_index), -1) FROM messages
+                     WHERE conversation_id = ?1 AND parent_id IS NULL",
+                    params![conversation_id],
+                    |row| row.get(0),
+                )
+                .unwrap_or(-1),
+        };
+        max + 1
+    }
+
+    /// Load the active path for a conversation. Two modes:
+    ///
+    /// - **Legacy (0.7.0)**: every row has `parent_id IS NULL`. Return all
+    ///   rows in `position` order, exactly as before.
+    /// - **Branched**: walk from the newest root (parent_id IS NULL with
+    ///   the most recent `created_at`) and at each step pick the child with
+    ///   the most recent `created_at`. Stops at a leaf.
     pub fn load_messages(&self, conversation_id: i64) -> Vec<Message> {
-        let mut stmt = match self.conn.prepare(
-            "SELECT role, content, created_at FROM messages WHERE conversation_id = ?1 ORDER BY position",
-        ) {
-            Ok(s) => s,
-            Err(_) => return Vec::new(),
+        // Pull every row once, then walk in memory. The largest hChat
+        // conversation is going to have hundreds of messages, not millions.
+        let rows = match self.fetch_all_message_rows(conversation_id) {
+            Some(r) => r,
+            None => return Vec::new(),
+        };
+        if rows.is_empty() {
+            return Vec::new();
+        }
+
+        // Branching is signalled by the presence of any non-NULL parent_id.
+        // A clean legacy conv (or a newly-created conv with one root and no
+        // children yet) takes the position-ordered fast path.
+        let any_parent_set = rows.iter().any(|r| r.parent_id.is_some());
+        if !any_parent_set {
+            let mut sorted = rows;
+            sorted.sort_by_key(|r| r.position);
+            return sorted.into_iter().map(MessageRow::into_message).collect();
+        }
+
+        // Branched walk: newest root, then newest child at each step.
+        use std::collections::HashMap;
+        let mut by_parent: HashMap<Option<i64>, Vec<MessageRow>> = HashMap::new();
+        for r in rows {
+            by_parent.entry(r.parent_id).or_default().push(r);
+        }
+        // Sort each bucket by created_at DESC so `.first()` gives the newest.
+        for bucket in by_parent.values_mut() {
+            // Newest sibling wins; branch_index DESC is the deterministic
+            // tiebreaker when two siblings share a created_at (or when both
+            // are NULL on legacy rows).
+            bucket.sort_by_key(|r| (std::cmp::Reverse(r.created_at), std::cmp::Reverse(r.branch_index)));
+        }
+
+        let mut out: Vec<Message> = Vec::new();
+        let mut current_parent: Option<i64> = None;
+        while let Some(bucket) = by_parent.get(&current_parent) {
+            let Some(picked) = bucket.first() else {
+                break;
+            };
+            let id = picked.id;
+            // Clone here because the bucket may be referenced again at a
+            // different parent depth (rare, but cheap relative to a chat
+            // round-trip).
+            out.push(picked.clone().into_message());
+            current_parent = Some(id);
+        }
+        out
+    }
+
+    fn fetch_all_message_rows(&self, conversation_id: i64) -> Option<Vec<MessageRow>> {
+        let mut stmt = self
+            .conn
+            .prepare(
+                "SELECT id, role, content, created_at, parent_id, branch_index, position
+                 FROM messages WHERE conversation_id = ?1",
+            )
+            .ok()?;
+        let mapped = stmt
+            .query_map(params![conversation_id], MessageRow::from_row)
+            .ok()?;
+        Some(mapped.filter_map(|r| r.ok()).collect())
+    }
+
+    /// One-time backfill: set `parent_id` of each row to the id of the
+    /// previous row (by position) within the same conversation. No-op if
+    /// any row already has a non-NULL parent_id (idempotent).
+    ///
+    /// Called by edit/regenerate before they create the first sibling in a
+    /// legacy 0.7.0 conversation, so the new branch slots into a coherent
+    /// parent chain.
+    pub fn backfill_parent_ids(&self, conversation_id: i64) -> Result<(), String> {
+        let already: i64 = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM messages
+                 WHERE conversation_id = ?1 AND parent_id IS NOT NULL",
+                params![conversation_id],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+        if already > 0 {
+            return Ok(());
+        }
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| format!("Failed to start backfill tx: {e}"))?;
+        let pairs: Vec<(i64, i64)> = {
+            let mut stmt = tx
+                .prepare(
+                    "SELECT id, position FROM messages
+                     WHERE conversation_id = ?1 ORDER BY position",
+                )
+                .map_err(|e| format!("Failed to prepare backfill query: {e}"))?;
+            stmt.query_map(params![conversation_id], |row| {
+                Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?))
+            })
+            .map_err(|e| format!("Failed to query backfill rows: {e}"))?
+            .filter_map(|r| r.ok())
+            .collect()
+        };
+        // Walk in position order: each row's parent is the previous row's id.
+        let mut prev_id: Option<i64> = None;
+        for (id, _pos) in pairs {
+            if let Some(p) = prev_id {
+                tx.execute(
+                    "UPDATE messages SET parent_id = ?1 WHERE id = ?2",
+                    params![p, id],
+                )
+                .map_err(|e| format!("Failed backfill update: {e}"))?;
+            }
+            prev_id = Some(id);
+        }
+        tx.commit()
+            .map_err(|e| format!("Failed to commit backfill: {e}"))
+    }
+
+    /// All messages with the same parent_id as `message_id` (including the
+    /// message itself), sorted by branch_index ascending. Used to render the
+    /// `◀ N/M ▶` sibling navigator.
+    pub fn siblings_of(&self, message_id: i64) -> Vec<MessageHeader> {
+        // Look up parent_id and conversation_id of the target.
+        let row: Option<(Option<i64>, i64)> = self
+            .conn
+            .query_row(
+                "SELECT parent_id, conversation_id FROM messages WHERE id = ?1",
+                params![message_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .ok();
+        let Some((parent_id, conv_id)) = row else {
+            return Vec::new();
+        };
+        let mut stmt = match parent_id {
+            Some(_) => self.conn.prepare(
+                "SELECT id, branch_index, created_at FROM messages
+                 WHERE conversation_id = ?1 AND parent_id = ?2
+                 ORDER BY branch_index",
+            ),
+            None => self.conn.prepare(
+                "SELECT id, branch_index, created_at FROM messages
+                 WHERE conversation_id = ?1 AND parent_id IS NULL
+                 ORDER BY branch_index",
+            ),
+        };
+        let Ok(stmt) = &mut stmt else {
+            return Vec::new();
+        };
+        // Collect inside each arm so the two closures don't need to unify
+        // — `query_map` is generic over the closure type and the arms would
+        // otherwise produce incompatible MappedRows types.
+        let map_row = |row: &rusqlite::Row<'_>| {
+            Ok::<MessageHeader, rusqlite::Error>(MessageHeader {
+                id: row.get(0)?,
+                branch_index: row.get(1)?,
+                created_at: row.get(2).ok(),
+            })
+        };
+        match parent_id {
+            Some(pid) => stmt
+                .query_map(params![conv_id, pid], map_row)
+                .map(|rows| rows.filter_map(|r| r.ok()).collect())
+                .unwrap_or_default(),
+            None => stmt
+                .query_map(params![conv_id], map_row)
+                .map(|rows| rows.filter_map(|r| r.ok()).collect())
+                .unwrap_or_default(),
+        }
+    }
+
+    /// Walk the active path starting from a specific message — used when
+    /// the user clicks a sibling-navigation arrow and we need to rebuild
+    /// the suffix of `self.messages` from that branch point down. The
+    /// returned vec includes `start_id` as the first element, then walks
+    /// children picking newest at each fork.
+    pub fn walk_from(&self, start_id: i64) -> Vec<Message> {
+        // Lift the conversation id once, then reuse the per-conv fetch.
+        let conv_id: Option<i64> = self
+            .conn
+            .query_row(
+                "SELECT conversation_id FROM messages WHERE id = ?1",
+                params![start_id],
+                |row| row.get(0),
+            )
+            .ok();
+        let Some(conv_id) = conv_id else {
+            return Vec::new();
+        };
+        let rows = match self.fetch_all_message_rows(conv_id) {
+            Some(r) => r,
+            None => return Vec::new(),
+        };
+        let start = match rows.iter().find(|r| r.id == start_id) {
+            Some(r) => r.clone(),
+            None => return Vec::new(),
         };
 
-        stmt.query_map(params![conversation_id], |row| {
-            let role_str: String = row.get(0)?;
-            let role = match role_str.as_str() {
-                "system" => Role::System,
-                "user" => Role::User,
-                "assistant" => Role::Assistant,
-                _ => Role::Assistant,
+        use std::collections::HashMap;
+        let mut by_parent: HashMap<Option<i64>, Vec<MessageRow>> = HashMap::new();
+        for r in rows {
+            by_parent.entry(r.parent_id).or_default().push(r);
+        }
+        for bucket in by_parent.values_mut() {
+            // Newest sibling wins; branch_index DESC is the deterministic
+            // tiebreaker when two siblings share a created_at (or when both
+            // are NULL on legacy rows).
+            bucket.sort_by_key(|r| (std::cmp::Reverse(r.created_at), std::cmp::Reverse(r.branch_index)));
+        }
+
+        let mut out = vec![start.clone().into_message()];
+        let mut current_parent: Option<i64> = Some(start.id);
+        while let Some(bucket) = by_parent.get(&current_parent) {
+            let Some(picked) = bucket.first() else {
+                break;
             };
-            let content_raw: String = row.get(1)?;
-            let created_at: Option<i64> = row.get(2).ok();
-            // Parse the stored JSON into ContentParts. Fall back to wrapping
-            // raw text if the row was somehow written as plain text (defensive
-            // — shouldn't happen post-v2, but cheap to handle).
-            let content: Vec<ContentPart> = serde_json::from_str(&content_raw).unwrap_or_else(|_| {
-                vec![ContentPart::Text {
-                    text: content_raw,
-                }]
-            });
-            Ok(Message {
-                role,
-                content,
-                created_at,
-            })
-        })
-        .map(|rows| rows.filter_map(|r| r.ok()).collect())
-        .unwrap_or_default()
+            let id = picked.id;
+            out.push(picked.clone().into_message());
+            current_parent = Some(id);
+        }
+        out
     }
 
     pub fn search(&self, query: &str) -> Vec<(i64, String, String)> {
@@ -588,6 +861,69 @@ pub struct Preset {
     pub settings: ConversationSettings,
 }
 
+/// Lightweight sibling-row description for the navigation UI. Doesn't carry
+/// content — just enough to pick the right id and show "N/M".
+pub struct MessageHeader {
+    pub id: i64,
+    /// Persisted branch_index. Not currently read by the UI (the N/M
+    /// display uses array position) but exposed for tests / future code.
+    #[allow(dead_code)]
+    pub branch_index: i64,
+    #[allow(dead_code)]
+    pub created_at: Option<i64>,
+}
+
+/// Raw row from the messages table — we rebuild `Message` from this with
+/// the JSON content parse separated out so the load/walk paths don't
+/// duplicate parsing logic.
+#[derive(Clone)]
+struct MessageRow {
+    id: i64,
+    role: Role,
+    content: Vec<ContentPart>,
+    created_at: Option<i64>,
+    parent_id: Option<i64>,
+    branch_index: i64,
+    position: i64,
+}
+
+impl MessageRow {
+    fn from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Self> {
+        let role_str: String = row.get(1)?;
+        let role = match role_str.as_str() {
+            "system" => Role::System,
+            "user" => Role::User,
+            "assistant" => Role::Assistant,
+            _ => Role::Assistant,
+        };
+        let content_raw: String = row.get(2)?;
+        let content: Vec<ContentPart> = serde_json::from_str(&content_raw)
+            .unwrap_or_else(|_| vec![ContentPart::Text { text: content_raw }]);
+        Ok(MessageRow {
+            id: row.get(0)?,
+            role,
+            content,
+            created_at: row.get(3).ok(),
+            parent_id: row.get(4).ok(),
+            // Schema-guaranteed NOT NULL columns — propagate errors rather
+            // than silently default to 0 if the row shape ever drifts.
+            branch_index: row.get(5)?,
+            position: row.get(6)?,
+        })
+    }
+
+    fn into_message(self) -> Message {
+        Message {
+            role: self.role,
+            content: self.content,
+            created_at: self.created_at,
+            id: Some(self.id),
+            parent_id: self.parent_id,
+            branch_index: self.branch_index,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -611,15 +947,17 @@ mod tests {
     fn round_trips_text_messages() {
         let s = mem_storage();
         let id = s.create_conversation("hello").unwrap();
-        let msgs = vec![
+        let mut msgs = vec![
             Message::text(Role::User, "hi".to_string()),
             Message::text(Role::Assistant, "hello!".to_string()),
         ];
-        s.save_messages(id, &msgs).unwrap();
+        s.save_messages(id, &mut msgs).unwrap();
         let loaded = s.load_messages(id);
         assert_eq!(loaded.len(), 2);
         assert_eq!(loaded[0].text_str(), "hi");
         assert_eq!(loaded[1].text_str(), "hello!");
+        // Auto-link: the second message's parent is the first.
+        assert_eq!(loaded[1].parent_id, loaded[0].id);
     }
 
     #[test]
@@ -637,8 +975,8 @@ mod tests {
                 },
             },
         ];
-        let msgs = vec![Message::from_parts(Role::User, parts.clone())];
-        s.save_messages(id, &msgs).unwrap();
+        let mut msgs = vec![Message::from_parts(Role::User, parts.clone())];
+        s.save_messages(id, &mut msgs).unwrap();
         let loaded = s.load_messages(id);
         assert_eq!(loaded.len(), 1);
         assert_eq!(loaded[0].content, parts);
@@ -652,7 +990,7 @@ mod tests {
         let id = s.create_conversation("vision conv").unwrap();
         s.save_messages(
             id,
-            &[Message::from_parts(
+            &mut [Message::from_parts(
                 Role::User,
                 vec![
                     ContentPart::Text {
@@ -763,5 +1101,226 @@ mod tests {
         assert_eq!(listed[0].settings.model.as_deref(), Some("haiku"));
         s.delete_preset(pid);
         assert!(s.list_presets().is_empty());
+    }
+
+    // ----- Phase 4: branching -----
+
+    /// Helper: bump created_at by a known delta so newest-wins picks are
+    /// deterministic. SQLite times via `datetime('now')` only resolve to
+    /// the second; we set our own ms timestamps to side-step that.
+    fn ts(base: i64, offset: i64) -> Option<i64> {
+        Some(base + offset)
+    }
+
+    #[test]
+    fn save_messages_assigns_ids_and_writes_them_back() {
+        let s = mem_storage();
+        let conv = s.create_conversation("ids").unwrap();
+        let mut msgs = vec![
+            Message::text(Role::User, "u".into()),
+            Message::text(Role::Assistant, "a".into()),
+        ];
+        s.save_messages(conv, &mut msgs).unwrap();
+        assert!(msgs[0].id.is_some());
+        assert!(msgs[1].id.is_some());
+        assert_eq!(msgs[1].parent_id, msgs[0].id);
+    }
+
+    #[test]
+    fn save_messages_updates_existing_in_place() {
+        let s = mem_storage();
+        let conv = s.create_conversation("update").unwrap();
+        let mut msgs = vec![Message::text(Role::User, "before".into())];
+        s.save_messages(conv, &mut msgs).unwrap();
+        let id = msgs[0].id.unwrap();
+        // Mutate content and save again — id stays, content changes.
+        msgs[0].content = vec![ContentPart::Text {
+            text: "after".into(),
+        }];
+        s.save_messages(conv, &mut msgs).unwrap();
+        assert_eq!(msgs[0].id, Some(id));
+        let loaded = s.load_messages(conv);
+        assert_eq!(loaded.len(), 1);
+        assert_eq!(loaded[0].text_str(), "after");
+    }
+
+    #[test]
+    fn legacy_load_falls_back_to_position_order() {
+        // A 0.7.0 conversation: every row has parent_id=NULL. load_messages
+        // must return them in position (== insertion) order.
+        let s = mem_storage();
+        let conv = s.create_conversation("legacy").unwrap();
+        let mut msgs = vec![
+            Message::text(Role::User, "u1".into()),
+            Message::text(Role::Assistant, "a1".into()),
+            Message::text(Role::User, "u2".into()),
+            Message::text(Role::Assistant, "a2".into()),
+        ];
+        s.save_messages(conv, &mut msgs).unwrap();
+        // Manually NULL out parent_id to simulate a legacy row layout
+        // (auto-link populated it during save above).
+        s.conn
+            .execute(
+                "UPDATE messages SET parent_id = NULL WHERE conversation_id = ?1",
+                params![conv],
+            )
+            .unwrap();
+        let loaded = s.load_messages(conv);
+        assert_eq!(
+            loaded.iter().map(|m| m.text_str()).collect::<Vec<_>>(),
+            vec!["u1", "a1", "u2", "a2"]
+        );
+    }
+
+    #[test]
+    fn backfill_parent_ids_chains_legacy_rows() {
+        let s = mem_storage();
+        let conv = s.create_conversation("backfill").unwrap();
+        let mut msgs = vec![
+            Message::text(Role::User, "u1".into()),
+            Message::text(Role::Assistant, "a1".into()),
+            Message::text(Role::User, "u2".into()),
+        ];
+        s.save_messages(conv, &mut msgs).unwrap();
+        s.conn
+            .execute(
+                "UPDATE messages SET parent_id = NULL WHERE conversation_id = ?1",
+                params![conv],
+            )
+            .unwrap();
+
+        s.backfill_parent_ids(conv).unwrap();
+        let loaded = s.load_messages(conv);
+        assert_eq!(loaded[0].parent_id, None);
+        assert_eq!(loaded[1].parent_id, loaded[0].id);
+        assert_eq!(loaded[2].parent_id, loaded[1].id);
+    }
+
+    #[test]
+    fn backfill_parent_ids_is_idempotent() {
+        let s = mem_storage();
+        let conv = s.create_conversation("idempotent").unwrap();
+        let mut msgs = vec![
+            Message::text(Role::User, "u".into()),
+            Message::text(Role::Assistant, "a".into()),
+        ];
+        s.save_messages(conv, &mut msgs).unwrap();
+        let before = s.load_messages(conv);
+        // Run backfill twice — should be a no-op the second time and not
+        // disturb existing parent_ids.
+        s.backfill_parent_ids(conv).unwrap();
+        s.backfill_parent_ids(conv).unwrap();
+        let after = s.load_messages(conv);
+        assert_eq!(
+            after.iter().map(|m| m.parent_id).collect::<Vec<_>>(),
+            before.iter().map(|m| m.parent_id).collect::<Vec<_>>(),
+        );
+    }
+
+    #[test]
+    fn branched_load_picks_newest_sibling_at_each_fork() {
+        // Build a tree:
+        //   user (id=1)
+        //     ├── assistant_old (branch 0, ts t)
+        //     └── assistant_new (branch 1, ts t+10)  ← active
+        //           └── (no children)
+        let s = mem_storage();
+        let conv = s.create_conversation("branched").unwrap();
+        let base = 1_700_000_000_000i64;
+        let mut user = Message::text(Role::User, "what".into());
+        user.created_at = ts(base, 0);
+        let mut a_old = Message::text(Role::Assistant, "old reply".into());
+        a_old.created_at = ts(base, 1);
+        let mut msgs = vec![user, a_old];
+        s.save_messages(conv, &mut msgs).unwrap();
+        let user_id = msgs[0].id.unwrap();
+
+        // Inject a sibling assistant directly (skipping the regenerate UI
+        // path we test elsewhere).
+        let mut a_new = Message::text(Role::Assistant, "new reply".into());
+        a_new.parent_id = Some(user_id);
+        a_new.branch_index = 1;
+        a_new.created_at = ts(base, 10);
+        s.save_messages(conv, &mut [a_new]).unwrap();
+
+        let loaded = s.load_messages(conv);
+        assert_eq!(loaded.len(), 2);
+        assert_eq!(loaded[0].text_str(), "what");
+        // Newest sibling wins at the branch point.
+        assert_eq!(loaded[1].text_str(), "new reply");
+        assert_eq!(loaded[1].branch_index, 1);
+    }
+
+    #[test]
+    fn siblings_of_returns_all_branches_at_a_point() {
+        let s = mem_storage();
+        let conv = s.create_conversation("sibs").unwrap();
+        let mut msgs = vec![
+            Message::text(Role::User, "ask".into()),
+            Message::text(Role::Assistant, "one".into()),
+        ];
+        s.save_messages(conv, &mut msgs).unwrap();
+        let user_id = msgs[0].id.unwrap();
+        let first_a_id = msgs[1].id.unwrap();
+
+        let mut sib = Message::text(Role::Assistant, "two".into());
+        sib.parent_id = Some(user_id);
+        sib.branch_index = 1;
+        s.save_messages(conv, &mut [sib]).unwrap();
+
+        let sibs = s.siblings_of(first_a_id);
+        assert_eq!(sibs.len(), 2);
+        assert_eq!(sibs[0].branch_index, 0);
+        assert_eq!(sibs[1].branch_index, 1);
+    }
+
+    #[test]
+    fn next_branch_index_grows_per_parent() {
+        let s = mem_storage();
+        let conv = s.create_conversation("nbi").unwrap();
+        let mut msgs = vec![Message::text(Role::User, "u".into())];
+        s.save_messages(conv, &mut msgs).unwrap();
+        let user_id = msgs[0].id.unwrap();
+        // First assistant under this parent: branch 0.
+        assert_eq!(s.next_branch_index(conv, Some(user_id)), 0);
+        let mut a = Message::text(Role::Assistant, "a".into());
+        a.parent_id = Some(user_id);
+        a.branch_index = 0;
+        s.save_messages(conv, &mut [a]).unwrap();
+        // Now next is 1.
+        assert_eq!(s.next_branch_index(conv, Some(user_id)), 1);
+    }
+
+    #[test]
+    fn walk_from_returns_subtree_active_path() {
+        // user -> assistant_a -> user2_a -> assistant_a2
+        //                    \-> user2_b -> assistant_b2 (newer, wins on default load)
+        let s = mem_storage();
+        let conv = s.create_conversation("walk").unwrap();
+        let base = 1_700_000_000_000i64;
+        let mut u = Message::text(Role::User, "u".into());
+        u.created_at = ts(base, 0);
+        let mut a = Message::text(Role::Assistant, "a".into());
+        a.created_at = ts(base, 1);
+        let mut msgs = vec![u, a];
+        s.save_messages(conv, &mut msgs).unwrap();
+        let a_id = msgs[1].id.unwrap();
+
+        let mut u2a = Message::text(Role::User, "u2-old".into());
+        u2a.parent_id = Some(a_id);
+        u2a.branch_index = 0;
+        u2a.created_at = ts(base, 2);
+        s.save_messages(conv, &mut [u2a.clone()]).unwrap();
+
+        let mut u2b = Message::text(Role::User, "u2-new".into());
+        u2b.parent_id = Some(a_id);
+        u2b.branch_index = 1;
+        u2b.created_at = ts(base, 10);
+        s.save_messages(conv, &mut [u2b]).unwrap();
+
+        // Walking from a_id picks the newer u2-new branch.
+        let path = s.walk_from(a_id);
+        let texts: Vec<String> = path.iter().map(|m| m.text_str()).collect();
+        assert_eq!(texts, vec!["a", "u2-new"]);
     }
 }
