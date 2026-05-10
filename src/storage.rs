@@ -64,9 +64,12 @@ impl Storage {
     }
 
     fn init_tables(&self) {
-        // schema_version is the migration cursor. Each migration runs at most
-        // once; a fresh DB jumps straight to the latest version after the
-        // initial CREATE block.
+        // Step 1: schema_version + the *baseline 0.6.0 shape* of every
+        // table. Newer columns are ALTERed in below. This split matters
+        // because `CREATE TABLE IF NOT EXISTS conversations (... pinned ...)`
+        // is a no-op when the table already exists from a prior version
+        // *without* `pinned` — so the old code crashed on first launch
+        // for any user upgrading from 0.6.x without wiping the DB.
         self.conn
             .execute_batch(
                 "CREATE TABLE IF NOT EXISTS schema_version (
@@ -77,20 +80,7 @@ impl Storage {
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     title TEXT NOT NULL,
                     created_at TEXT NOT NULL DEFAULT (datetime('now')),
-                    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
-                    model TEXT,
-                    system_prompt TEXT,
-                    temperature REAL,
-                    max_tokens INTEGER,
-                    use_max_tokens INTEGER NOT NULL DEFAULT 0,
-                    top_p REAL,
-                    frequency_penalty REAL,
-                    presence_penalty REAL,
-                    stop_sequences TEXT,
-                    endpoint TEXT,
-                    pinned INTEGER NOT NULL DEFAULT 0,
-                    draft TEXT,
-                    auto_titled INTEGER NOT NULL DEFAULT 0
+                    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
                 );
                 CREATE TABLE IF NOT EXISTS messages (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -98,36 +88,110 @@ impl Storage {
                     role TEXT NOT NULL,
                     content TEXT NOT NULL,
                     position INTEGER NOT NULL,
-                    parent_id INTEGER REFERENCES messages(id) ON DELETE CASCADE,
-                    branch_index INTEGER NOT NULL DEFAULT 0,
-                    created_at INTEGER,
                     FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
                 );
                 CREATE TABLE IF NOT EXISTS presets (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     name TEXT NOT NULL,
-                    model TEXT,
-                    system_prompt TEXT,
-                    temperature REAL,
-                    max_tokens INTEGER,
-                    use_max_tokens INTEGER NOT NULL DEFAULT 0,
-                    top_p REAL,
-                    frequency_penalty REAL,
-                    presence_penalty REAL,
-                    stop_sequences TEXT,
-                    endpoint TEXT,
                     created_at TEXT NOT NULL DEFAULT (datetime('now'))
-                );
-                CREATE INDEX IF NOT EXISTS idx_messages_conv_position ON messages(conversation_id, position);
-                CREATE INDEX IF NOT EXISTS idx_messages_parent ON messages(parent_id);
-                CREATE INDEX IF NOT EXISTS idx_conversations_pinned_updated ON conversations(pinned DESC, updated_at DESC);
-                INSERT OR IGNORE INTO schema_version (version) VALUES (2);",
+                );",
             )
-            .expect("Failed to create tables");
+            .expect("Failed to create baseline tables");
+
+        // Step 2: ensure all v2 columns exist, ALTERing them in if missing.
+        // Idempotent — re-runs cheaply on every launch.
+        self.ensure_v2_columns();
+
+        // Step 3: indexes + version stamp. Safe now that columns exist.
+        self.conn
+            .execute_batch(
+                "CREATE INDEX IF NOT EXISTS idx_messages_conv_position ON messages(conversation_id, position);
+                 CREATE INDEX IF NOT EXISTS idx_messages_parent ON messages(parent_id);
+                 CREATE INDEX IF NOT EXISTS idx_conversations_pinned_updated ON conversations(pinned DESC, updated_at DESC);
+                 INSERT OR IGNORE INTO schema_version (version) VALUES (2);",
+            )
+            .expect("Failed to create indexes");
+    }
+
+    /// Bring every table up to the v2 column set by ALTERing in any column
+    /// that's missing. The list of (table, column, type) is the source of
+    /// truth — adding a future column is one line here, no schema-version
+    /// math required.
+    ///
+    /// Errors are swallowed per-column on purpose: ALTER TABLE failures on
+    /// a single column shouldn't take down launch (the user can still read
+    /// existing data), and the most common failure ("column already exists"
+    /// when our `pragma_table_info` race lost) is benign.
+    fn ensure_v2_columns(&self) {
+        const CONV_COLS: &[(&str, &str)] = &[
+            ("model", "TEXT"),
+            ("system_prompt", "TEXT"),
+            ("temperature", "REAL"),
+            ("max_tokens", "INTEGER"),
+            ("use_max_tokens", "INTEGER NOT NULL DEFAULT 0"),
+            ("top_p", "REAL"),
+            ("frequency_penalty", "REAL"),
+            ("presence_penalty", "REAL"),
+            ("stop_sequences", "TEXT"),
+            ("endpoint", "TEXT"),
+            ("pinned", "INTEGER NOT NULL DEFAULT 0"),
+            ("draft", "TEXT"),
+            ("auto_titled", "INTEGER NOT NULL DEFAULT 0"),
+        ];
+        const MSG_COLS: &[(&str, &str)] = &[
+            // SQLite allows ALTER TABLE ADD COLUMN with a self-referencing
+            // FK as long as no NOT NULL is involved. parent_id is nullable
+            // (root rows have NULL) so this is safe.
+            ("parent_id", "INTEGER REFERENCES messages(id) ON DELETE CASCADE"),
+            ("branch_index", "INTEGER NOT NULL DEFAULT 0"),
+            ("created_at", "INTEGER"),
+        ];
+        const PRESET_COLS: &[(&str, &str)] = &[
+            ("model", "TEXT"),
+            ("system_prompt", "TEXT"),
+            ("temperature", "REAL"),
+            ("max_tokens", "INTEGER"),
+            ("use_max_tokens", "INTEGER NOT NULL DEFAULT 0"),
+            ("top_p", "REAL"),
+            ("frequency_penalty", "REAL"),
+            ("presence_penalty", "REAL"),
+            ("stop_sequences", "TEXT"),
+            ("endpoint", "TEXT"),
+        ];
+
+        for (col, ty) in CONV_COLS {
+            self.add_column_if_missing("conversations", col, ty);
+        }
+        for (col, ty) in MSG_COLS {
+            self.add_column_if_missing("messages", col, ty);
+        }
+        for (col, ty) in PRESET_COLS {
+            self.add_column_if_missing("presets", col, ty);
+        }
+    }
+
+    fn add_column_if_missing(&self, table: &str, column: &str, type_def: &str) {
+        let exists: i64 = self
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info(?1) WHERE name = ?2",
+                params![table, column],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+        if exists == 0 {
+            // Table/column names come from compile-time string literals
+            // above, not user input — string-formatting them into the SQL
+            // is safe here.
+            let sql = format!("ALTER TABLE {table} ADD COLUMN {column} {type_def}");
+            if let Err(e) = self.conn.execute(&sql, []) {
+                eprintln!("Migration warning: failed to add {table}.{column}: {e}");
+            }
+        }
     }
 
     /// Current schema version, or 0 if the table is empty/missing.
-    #[allow(dead_code)]
+    #[allow(dead_code)] // used by tests; future migrations will branch on this
     fn schema_version(&self) -> i64 {
         self.conn
             .query_row(
@@ -937,9 +1001,88 @@ mod tests {
         storage
     }
 
+    /// Build a Storage with the *original 0.6.0 schema* — no
+    /// schema_version table, no v2 columns. Used to prove that
+    /// init_tables migrates cleanly when launched against an old DB.
+    fn legacy_0_6_storage_with_data() -> Storage {
+        let conn = Connection::open_in_memory().expect("open :memory:");
+        conn.execute_batch(
+            "CREATE TABLE conversations (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                title TEXT NOT NULL,
+                created_at TEXT NOT NULL DEFAULT (datetime('now')),
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            );
+            CREATE TABLE messages (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id INTEGER NOT NULL,
+                role TEXT NOT NULL,
+                content TEXT NOT NULL,
+                position INTEGER NOT NULL,
+                FOREIGN KEY (conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
+            );",
+        )
+        .expect("create legacy schema");
+        // Insert one row in the legacy plain-text content shape.
+        conn.execute(
+            "INSERT INTO conversations (title) VALUES ('legacy chat')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO messages (conversation_id, role, content, position)
+             VALUES (1, 'user', 'hello from 0.6', 0)",
+            [],
+        )
+        .unwrap();
+        Storage { conn }
+    }
+
     #[test]
     fn schema_is_at_v2_after_init() {
         let s = mem_storage();
+        assert_eq!(s.schema_version(), 2);
+    }
+
+    #[test]
+    fn init_tables_migrates_legacy_0_6_db_in_place() {
+        // This is the regression test for the "no such column: parent_id"
+        // crash that hit any 0.6.x user upgrading without wiping their DB.
+        let s = legacy_0_6_storage_with_data();
+        // init_tables must NOT panic even though the existing tables lack
+        // every v2 column (parent_id, pinned, draft, auto_titled, etc).
+        s.init_tables();
+
+        // Schema version is now 2.
+        assert_eq!(s.schema_version(), 2);
+
+        // The pre-existing conversation + message survived the migration.
+        let convs = s.list_conversations();
+        assert_eq!(convs.len(), 1);
+        assert_eq!(convs[0].title, "legacy chat");
+        assert!(!convs[0].pinned); // newly-added column defaults to 0
+        let msgs = s.load_messages(convs[0].id);
+        assert_eq!(msgs.len(), 1);
+        // Plain-text content (not JSON) round-trips via the load fallback.
+        assert_eq!(msgs[0].text_str(), "hello from 0.6");
+        // New v2 columns default sensibly on legacy rows.
+        assert_eq!(msgs[0].parent_id, None);
+        assert_eq!(msgs[0].branch_index, 0);
+
+        // Subsequent saves write into the migrated schema without error.
+        let mut new_msgs = vec![Message::text(Role::Assistant, "hi from 0.8".into())];
+        s.save_messages(convs[0].id, &mut new_msgs)
+            .expect("save into migrated DB");
+        assert!(new_msgs[0].id.is_some());
+    }
+
+    #[test]
+    fn init_tables_is_idempotent() {
+        // Running init_tables twice on an already-migrated DB must be a
+        // no-op (no duplicate-column errors, schema_version stays at 2).
+        let s = legacy_0_6_storage_with_data();
+        s.init_tables();
+        s.init_tables();
         assert_eq!(s.schema_version(), 2);
     }
 
