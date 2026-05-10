@@ -7,18 +7,25 @@ Connects to any OpenAI API-compatible endpoint. Defaults to [Ollama](https://oll
 ## Features
 
 - Streaming token display with stop/regenerate controls
+- **Branching conversations** — every regenerate or edit creates a sibling instead of overwriting; navigate alternates with `◀ N/M ▶` arrows on any branched message
+- **Multimodal content** — drag-and-drop images (png/jpg/webp/gif) into the input as attachments for vision-capable models
+- **Drag-and-drop text files** (rs, py, md, json, etc.) inline into the input as fenced code blocks with language inferred from the extension
+- **Per-conversation settings** — each chat owns its own model, system prompt, temperature, sampling params, and endpoint, persisted to its row
+- **Presets** — save the current chat's settings as a named bundle, apply to other chats or seed new ones
+- **Pinned conversations** sort to the top of the sidebar
+- **Drafts** — your in-progress input persists per-conversation; switch chats and come back to find it intact
+- **Auto-titled chats** — after the first assistant response, hChat generates a short conversation title via a one-shot completion against your current model
 - Markdown rendering in AI responses, with **per-code-block copy buttons** and language pills
 - **Reasoning model support** — inline `<think>` blocks and provider `reasoning` deltas (qwen3, deepseek-r1, gpt-oss, etc.) render as collapsible sections that auto-collapse when streaming finishes
 - **Slash commands** for keyboard-first control: `/model`, `/temp`, `/system`, `/clear`, `/copy`, `/help`
 - **Find in conversation** (Ctrl+F) with match highlighting and scroll-to-first-match
 - Model selector auto-populated from your endpoint
-- Conversation history with SQLite persistence (WAL + busy_timeout)
-- Sidebar with conversation list, search, rename, and markdown export
+- Conversation history with SQLite persistence (WAL + busy_timeout). Schema migrations run on launch, so upgrading between versions doesn't require wiping your data
+- Sidebar with conversation list, search, rename, pin, and markdown export
 - **Live token counter** in the input footer (tiktoken-cached) plus post-response usage and cost display
 - System prompt, temperature, max tokens — plus **advanced sampling controls** (`top_p`, `frequency_penalty`, `presence_penalty`, stop sequences)
 - Multiple saved API endpoints with per-endpoint API key support
 - Works with OpenRouter, LM Studio, vLLM, Ollama, and any OpenAI-compatible API
-- Edit and resend previous messages (regenerate from any point)
 - Hover timestamps on messages
 - Empty-state starter prompts to kick off new chats
 - Dark/light theme toggle
@@ -108,9 +115,14 @@ Or configure it directly in `config.toml` — see [example.config.toml](example.
 
 ## Configuration
 
-Settings are stored in `~/.config/hchat/config.toml` and persist across sessions. You can edit the file directly or use the settings panel in the app (gear icon). See [example.config.toml](example.config.toml) for a fully commented example of all options.
+Two layers:
 
-All fields are optional. Missing fields use defaults, so existing configs won't break on upgrade.
+- **Global defaults** live in `~/.config/hchat/config.toml` — model name, system prompt, sampling params, endpoints, fonts, theme. These seed every new conversation. Edit the file directly or use the settings panel (gear icon). See [example.config.toml](example.config.toml) for a fully commented example.
+- **Per-conversation overrides** live in the SQLite database alongside your messages. Tweaking the system prompt or temperature inside a chat only affects *that* chat — your global defaults stay untouched. Save the resulting bundle as a preset to apply elsewhere.
+
+Conversation data lives in `~/Library/Application Support/hchat/hchat.db` (macOS) or `~/.local/share/hchat/hchat.db` (Linux). Schema migrations run automatically on launch, so upgrading between versions doesn't require wiping your data.
+
+All config fields are optional. Missing fields use defaults, so existing configs won't break on upgrade.
 
 ### Custom fonts
 

@@ -35,6 +35,22 @@ pub struct Message {
     /// have `None`). Set when a message is added in the current session.
     #[serde(skip_serializing, default)]
     pub created_at: Option<i64>,
+    /// SQLite rowid. `None` for messages that haven't been written yet — the
+    /// next `save_messages` will INSERT and capture the assigned id back into
+    /// the struct. Persisted messages always have `Some`.
+    #[serde(skip, default)]
+    pub id: Option<i64>,
+    /// Parent message in the branching tree. `None` for the conversation root
+    /// (the very first message) and for any message in a legacy 0.7.0
+    /// conversation that hasn't been backfilled yet.
+    #[serde(skip, default)]
+    pub parent_id: Option<i64>,
+    /// Sibling index under `parent_id`. 0 for the original/first reply at a
+    /// branch point; 1, 2, ... for subsequent regenerations or edits. The
+    /// active path picks the sibling with the most recent `created_at` at
+    /// each parent.
+    #[serde(skip, default)]
+    pub branch_index: i64,
 }
 
 impl Message {
@@ -44,6 +60,9 @@ impl Message {
             role,
             content: vec![ContentPart::Text { text: body }],
             created_at: Some(now_ms()),
+            id: None,
+            parent_id: None,
+            branch_index: 0,
         }
     }
 
@@ -54,6 +73,9 @@ impl Message {
             role,
             content: parts,
             created_at: Some(now_ms()),
+            id: None,
+            parent_id: None,
+            branch_index: 0,
         }
     }
 

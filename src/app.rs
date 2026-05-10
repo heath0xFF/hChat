@@ -271,7 +271,7 @@ impl ChatApp {
         }
 
         let save_result: Result<(), String> = match self.current_conversation_id {
-            Some(id) => self.storage.save_messages(id, &self.messages),
+            Some(id) => self.storage.save_messages(id, &mut self.messages),
             None => {
                 let title = self
                     .messages
@@ -297,7 +297,7 @@ impl ChatApp {
 
                 match self.storage.create_conversation(&title) {
                     Ok(id) => {
-                        let r = self.storage.save_messages(id, &self.messages);
+                        let r = self.storage.save_messages(id, &mut self.messages);
                         if r.is_ok() {
                             self.current_conversation_id = Some(id);
                             // Persist the live settings as the conv's initial
@@ -849,8 +849,19 @@ impl ChatApp {
             return;
         }
 
-        self.messages
-            .push(Message::text(Role::Assistant, String::new()));
+        // If the caller (regenerate, edit_and_resend) already prepared an
+        // empty assistant placeholder with the right parent_id /
+        // branch_index, don't double-push. Otherwise add a fresh one;
+        // save_messages will auto-link its parent_id to the preceding user
+        // message in the slice.
+        let needs_placeholder = match self.messages.last() {
+            Some(m) => m.role != Role::Assistant || !m.is_empty_content(),
+            None => true,
+        };
+        if needs_placeholder {
+            self.messages
+                .push(Message::text(Role::Assistant, String::new()));
+        }
         self.reasoning_open = false;
 
         let (tx, rx) = mpsc::unbounded_channel();
@@ -921,12 +932,54 @@ impl ChatApp {
         if self.streaming || self.models.is_empty() {
             return;
         }
-        if let Some(last) = self.messages.last()
-            && last.role == Role::Assistant
-        {
+        let Some(last) = self.messages.last() else {
+            return;
+        };
+        if last.role != Role::Assistant {
+            return;
+        }
+        let parent_id = last.parent_id;
+
+        // Make sure the conversation has a parent_id chain. Legacy 0.7.0
+        // conversations didn't, so the first regenerate triggers a one-shot
+        // backfill — the resulting siblings then have a real ancestor to
+        // attach to.
+        if let Some(conv_id) = self.current_conversation_id {
+            let _ = self.storage.backfill_parent_ids(conv_id);
+            // The backfill rewrote rows in-place; refresh the in-memory
+            // copy so subsequent navigation/saves see the new parent_ids.
+            // (The active path doesn't change — just the linkage metadata.)
+            self.messages = self.storage.load_messages(conv_id);
+        }
+
+        // After the (possible) reload, find the assistant we want to
+        // regenerate and the parent it's attached to.
+        let (parent_for_new, branch_index) = if let Some(conv_id) = self.current_conversation_id {
+            let p = self
+                .messages
+                .last()
+                .and_then(|m| m.parent_id)
+                .or(parent_id);
+            let bi = self.storage.next_branch_index(conv_id, p);
+            (p, bi)
+        } else {
+            // Unsaved conversation — no DB to consult. Pop the assistant
+            // and let start_streaming push a fresh one as before. Branch
+            // tracking only kicks in once the conv is persisted.
             self.messages.pop();
             self.start_streaming();
-        }
+            return;
+        };
+
+        // Pop the active assistant from the in-memory path; the row stays
+        // in the DB so the user can navigate back to it via the sibling
+        // arrows.
+        self.messages.pop();
+        let mut placeholder = Message::text(Role::Assistant, String::new());
+        placeholder.parent_id = parent_for_new;
+        placeholder.branch_index = branch_index;
+        self.messages.push(placeholder);
+        self.start_streaming();
     }
 
     fn edit_and_resend(&mut self, index: usize) {
@@ -939,8 +992,8 @@ impl ChatApp {
         }
 
         // Preserve any non-text parts (image attachments) on the original
-        // message. Replacing `content` outright would silently drop images
-        // when the user edits a multimodal turn.
+        // message. The new sibling user message inherits them so editing a
+        // multimodal turn doesn't silently drop the images.
         let preserved: Vec<ContentPart> = self.messages[index]
             .content
             .iter()
@@ -949,8 +1002,45 @@ impl ChatApp {
             .collect();
         let mut new_parts = vec![ContentPart::Text { text: content }];
         new_parts.extend(preserved);
-        self.messages[index].content = new_parts;
-        self.messages.truncate(index + 1);
+
+        let original_parent = self.messages[index].parent_id;
+
+        // Backfill legacy conversations so the new sibling slots into a
+        // coherent parent chain. Then reload to pick up the linkage.
+        if let Some(conv_id) = self.current_conversation_id {
+            let _ = self.storage.backfill_parent_ids(conv_id);
+            self.messages = self.storage.load_messages(conv_id);
+            // If reload changed indices (it shouldn't for a clean backfill),
+            // bail safely rather than corrupt state.
+            if index >= self.messages.len() {
+                self.editing_message = None;
+                self.edit_buffer.clear();
+                return;
+            }
+        }
+
+        let parent_for_sibling = self
+            .messages
+            .get(index)
+            .and_then(|m| m.parent_id)
+            .or(original_parent);
+
+        let branch_index = if let Some(conv_id) = self.current_conversation_id {
+            self.storage
+                .next_branch_index(conv_id, parent_for_sibling)
+        } else {
+            0
+        };
+
+        // Truncate the in-memory active path at `index` (the rows beyond
+        // stay on disk as a sibling branch). Push the edited user message
+        // as a new sibling — it gets a fresh id on save.
+        self.messages.truncate(index);
+        let mut new_user = Message::from_parts(Role::User, new_parts);
+        new_user.parent_id = parent_for_sibling;
+        new_user.branch_index = branch_index;
+        self.messages.push(new_user);
+
         self.editing_message = None;
         self.edit_buffer.clear();
 
@@ -961,6 +1051,38 @@ impl ChatApp {
         if let Ok(mut clipboard) = arboard::Clipboard::new() {
             let _ = clipboard.set_text(text);
         }
+    }
+
+    /// Switch to the prev/next sibling at branch point `index`. Direction is
+    /// `-1` for previous, `+1` for next. Splices the new branch into
+    /// `self.messages` from `index` onward by walking the tree from the
+    /// chosen sibling. No-op if the message has no id (unsaved) or no
+    /// sibling exists in the requested direction.
+    fn navigate_sibling(&mut self, index: usize, direction: i64) {
+        if self.streaming || index >= self.messages.len() {
+            return;
+        }
+        let Some(current_id) = self.messages[index].id else {
+            return;
+        };
+        let sibs = self.storage.siblings_of(current_id);
+        if sibs.len() <= 1 {
+            return;
+        }
+        let Some(cur_pos) = sibs.iter().position(|s| s.id == current_id) else {
+            return;
+        };
+        let new_pos: usize = match direction.cmp(&0) {
+            std::cmp::Ordering::Less if cur_pos > 0 => cur_pos - 1,
+            std::cmp::Ordering::Greater if cur_pos + 1 < sibs.len() => cur_pos + 1,
+            _ => return,
+        };
+        let target_id = sibs[new_pos].id;
+        let new_path = self.storage.walk_from(target_id);
+        // Truncate everything from `index` down (it belonged to the old
+        // branch) and replace with the walked path from the chosen sibling.
+        self.messages.truncate(index);
+        self.messages.extend(new_path);
     }
 
     fn process_events(&mut self) {
@@ -2171,6 +2293,21 @@ impl eframe::App for ChatApp {
                         let highlight_fill =
                             ui.visuals().selection.bg_fill.linear_multiply(0.25);
 
+                        // Build (current_branch_position, total_siblings) per
+                        // message — used to render the ◀ N/M ▶ navigator.
+                        // None = no siblings or message not yet persisted.
+                        let sibling_info: Vec<Option<(usize, usize)>> = (0..msg_count)
+                            .map(|i| {
+                                let mid = self.messages[i].id?;
+                                let sibs = self.storage.siblings_of(mid);
+                                if sibs.len() <= 1 {
+                                    return None;
+                                }
+                                let pos = sibs.iter().position(|s| s.id == mid)?;
+                                Some((pos, sibs.len()))
+                            })
+                            .collect();
+
                         // We iterate by index to avoid holding a borrow on self.messages
                         // across the body, which needs &mut self for commonmark_cache.
                         for i in 0..msg_count {
@@ -2188,6 +2325,7 @@ impl eframe::App for ChatApp {
                             };
 
                             let matches_find = match_flags.get(i).copied().unwrap_or(false);
+                            let sib = sibling_info.get(i).copied().flatten();
 
                             let render_inner = |ui: &mut egui::Ui,
                                                     cache: &mut CommonMarkCache,
@@ -2198,6 +2336,33 @@ impl eframe::App for ChatApp {
                                     let role_resp = ui.colored_label(color, format!("{prefix}:"));
                                     if let Some(ts) = created_at {
                                         role_resp.on_hover_text(format_timestamp(ts));
+                                    }
+                                    // Sibling navigator (◀ N/M ▶) — only when
+                                    // this message has alternate branches.
+                                    if let Some((pos, total)) = sib {
+                                        let prev_enabled = pos > 0;
+                                        let next_enabled = pos + 1 < total;
+                                        if ui
+                                            .add_enabled(
+                                                prev_enabled,
+                                                egui::Button::new("◀").small(),
+                                            )
+                                            .on_hover_text("Previous branch")
+                                            .clicked()
+                                        {
+                                            act = Some(MessageAction::PrevSibling(i));
+                                        }
+                                        ui.weak(format!("{}/{}", pos + 1, total));
+                                        if ui
+                                            .add_enabled(
+                                                next_enabled,
+                                                egui::Button::new("▶").small(),
+                                            )
+                                            .on_hover_text("Next branch")
+                                            .clicked()
+                                        {
+                                            act = Some(MessageAction::NextSibling(i));
+                                        }
                                     }
                                     ui.with_layout(
                                         egui::Layout::right_to_left(egui::Align::Center),
@@ -2309,6 +2474,12 @@ impl eframe::App for ChatApp {
                             Some(MessageAction::Regenerate) => {
                                 self.regenerate();
                             }
+                            Some(MessageAction::PrevSibling(i)) => {
+                                self.navigate_sibling(i, -1);
+                            }
+                            Some(MessageAction::NextSibling(i)) => {
+                                self.navigate_sibling(i, 1);
+                            }
                             _ => {}
                         }
                     });
@@ -2362,6 +2533,12 @@ enum MessageAction {
     FinishEdit(usize),
     CancelEdit,
     Regenerate,
+    /// Navigate to the previous (or next) sibling at this branch point. The
+    /// `usize` is the message index in `self.messages`; the handler queries
+    /// the DB for siblings, picks the appropriate one, and re-walks the
+    /// active path from there.
+    PrevSibling(usize),
+    NextSibling(usize),
 }
 
 enum SidebarAction {
