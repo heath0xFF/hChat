@@ -140,3 +140,7 @@ what i want right now is a walkthrough of the next phases. what are we building 
 yeah fold that idea into phase 6. 
 
 i say get started on 5a. what default tools should we ship with? bash, file read, file write?
+
+---
+
+keep moving!
