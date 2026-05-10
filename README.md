@@ -7,6 +7,7 @@ Connects to any OpenAI API-compatible endpoint. Defaults to [Ollama](https://oll
 ## Features
 
 - Streaming token display with stop/regenerate controls
+- **Native tool calling** — the model can read files, search code, run shell commands, and write back into your working directory. Five default tools ship pre-configured (`read_file`, `list_directory`, `search_files`, `write_file`, `run_shell`); destructive ones prompt for approval. Define your own tools as TOML files in `~/.config/hchat/tools/` (works with any tool-capable OpenAI-compatible model)
 - **Branching conversations** — every regenerate or edit creates a sibling instead of overwriting; navigate alternates with `◀ N/M ▶` arrows on any branched message
 - **Multimodal content** — drag-and-drop images (png/jpg/webp/gif) into the input as attachments for vision-capable models
 - **Drag-and-drop text files** (rs, py, md, json, etc.) inline into the input as fenced code blocks with language inferred from the extension
@@ -131,6 +132,43 @@ Set `font_family` and `mono_font_family` to any font installed on your system. h
 ### API keys
 
 API keys are stored per-endpoint in `config.toml`. Endpoints that don't need authentication (like local Ollama) simply omit the `api_key` field. Keys are sent as `Authorization: Bearer` headers.
+
+## Tools
+
+Tool-capable models (OpenAI gpt-4+, Claude, most modern frontier models) can call functions hChat exposes. Five defaults are seeded into `~/.config/hchat/tools/` on first launch:
+
+| Tool | Safety | Description |
+|---|---|---|
+| `read_file` | auto | Reads a file (with optional `offset`/`limit` for slicing). Up to 100KB per call. |
+| `list_directory` | auto | Lists entries with `d/` (directory) or `f/` (file) prefix. |
+| `search_files` | auto | Recursive regex search; skips dotdirs and binary files. |
+| `write_file` | confirm | Writes a file (overwrite or append). Creates parent dirs. |
+| `run_shell` | confirm | Runs `sh -c` in the conversation's working directory. 5 minute wall-clock cap. |
+
+`safety = "auto"` tools execute silently; `safety = "confirm"` tools pop an approval card with the full args before running. The card has **Approve**, **Approve all in this conv** (per-conversation allowlist for that tool name), and **Reject** buttons.
+
+### Working directory
+
+Each conversation has its own `working_dir` (settings panel). All tool calls resolve relative paths against it. Defaults to your home directory; set it to a project root and the model can reason about that codebase end-to-end.
+
+### Defining your own tools
+
+Drop a `.toml` file into `~/.config/hchat/tools/`. The minimum is `name`, `description`, JSON-schema `parameters`, and a `handler`. Two handler types:
+
+```toml
+# Builtin: hardcoded Rust handler. Used by the 5 defaults.
+handler = "builtin:read_file"
+
+# Shell: forks an argv with {{name}} substitution from the call's arguments.
+handler = { shell = ["git", "log", "--oneline", "-n", "{{count}}"] }
+safety = "confirm"  # or "auto" for read-only tools
+```
+
+Restart hChat to load new tools. Edits to existing tool files take effect on next launch.
+
+### Iteration cap
+
+The model can chain tool calls — read a file, look at the imports, read those, then propose an edit. hChat caps this at **8 cycles per user turn** to prevent runaway loops. The counter resets on the next user message (or on regenerate / edit).
 
 ## Slash commands
 
