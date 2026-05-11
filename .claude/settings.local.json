@@ -15,7 +15,13 @@
       "Bash(cargo clippy *)",
       "Bash(cargo test *)",
       "Bash(git diff *)",
-      "Read(//tmp/**)"
+      "Read(//tmp/**)",
+      "Bash(python3 -c ' *)",
+      "Bash(awk '/fn ui\\\\\\(&mut self/,0' /Users/heath/code/hChat/src/app.rs)",
+      "Bash(awk '/^\\\\s*\\\\}/ {count++; if \\(count >= 1\\) print NR; if \\(count >= 4\\) exit}')",
+      "Read(//private/tmp/**)",
+      "Bash(gh pr *)",
+      "Bash(gh run *)"
     ]
   }
 }
