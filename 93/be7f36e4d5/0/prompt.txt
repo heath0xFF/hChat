@@ -1,0 +1,29 @@
+i'm moving to lm studio as my backend for local models instead of ollama. i'd like to add support for lm studio backend
+
+---
+
+yeah do that.
+
+---
+
+now update the readme and make sure that there's a section about prerequisites
+
+---
+
+your read on lm studio api endpoints was wrong. there are three available types of endpoints, see screenshots. [Image #1] [Image #2] [Image #3]
+
+---
+
+can you verify that the code implementation for the lm studio api endpoints is fine?
+
+---
+
+yeah add the stream_options for streaming requests
+
+---
+
+ok and the example config is up-to-date with this change as well?
+
+---
+
+is there an example config option for openrouter, as well?
