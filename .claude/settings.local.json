@@ -21,7 +21,8 @@
       "Bash(awk '/^\\\\s*\\\\}/ {count++; if \\(count >= 1\\) print NR; if \\(count >= 4\\) exit}')",
       "Read(//private/tmp/**)",
       "Bash(gh pr *)",
-      "Bash(gh run *)"
+      "Bash(gh run *)",
+      "Bash(curl *)"
     ]
   }
 }
