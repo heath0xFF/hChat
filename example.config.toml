@@ -80,25 +80,25 @@ use_max_tokens = false
 
 # default_endpoint: The URL of the endpoint to use by default on application launch.
 # This URL must exactly match one of the URLs in your `saved_endpoints` list below.
-# Default: "http://localhost:11434/v1"
-default_endpoint = "http://localhost:11434/v1"
+# Default: "http://localhost:1234/v1"
+default_endpoint = "http://localhost:1234/v1"
 
 # saved_endpoints: A list of AI providers and models you want to connect to.
 # Each endpoint requires a `url` and optionally an `api_key`.
-# If `api_key` is omitted, no Authorization header will be sent (perfect for local instances like Ollama).
+# If `api_key` is omitted, no Authorization header will be sent (perfect for local instances like LM Studio).
 
-# Local Ollama (No API key needed)
+# Local LM Studio (No API key needed — start the server from the LM Studio app)
 [[saved_endpoints]]
-url = "http://localhost:11434/v1"
+url = "http://localhost:1234/v1"
+
+# Example: Ollama (Usually runs locally, no API key needed)
+# [[saved_endpoints]]
+# url = "http://localhost:11434/v1"
 
 # Example: OpenRouter (Requires API key from https://openrouter.ai/keys)
 # [[saved_endpoints]]
 # url = "https://openrouter.ai/api/v1"
 # api_key = "sk-or-v1-your-key-here"
-
-# Example: LM Studio (Usually runs locally, no API key needed)
-# [[saved_endpoints]]
-# url = "http://localhost:1234/v1"
 
 # Example: OpenAI or other compatible APIs
 # [[saved_endpoints]]

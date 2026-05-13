@@ -65,6 +65,18 @@ struct ChatRequest {
     /// our type system — `tools.rs` builds these from `ToolDef` at send time.
     #[serde(skip_serializing_if = "Option::is_none")]
     tools: Option<Vec<serde_json::Value>>,
+    /// Asks the provider to emit a final `usage` chunk in streaming mode.
+    /// OpenAI, LM Studio, and recent vLLM/Ollama gate streaming `usage`
+    /// behind this flag; without it the post-response token counter and
+    /// cost display stay empty. OpenRouter emits usage either way, so this
+    /// is additive across providers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    stream_options: Option<StreamOptions>,
+}
+
+#[derive(Serialize)]
+struct StreamOptions {
+    include_usage: bool,
 }
 
 #[derive(Deserialize)]
@@ -149,6 +161,14 @@ pub enum StreamEvent {
 const MAX_ERROR_BODY: usize = 4096;
 const MAX_STREAM_BUFFER: usize = 1024 * 1024; // 1MB
 
+/// Returned when an endpoint is reachable but lists zero models. The two
+/// common causes (LM Studio with no loaded model, Ollama with nothing
+/// pulled) have different fixes, so surface both rather than guess which
+/// provider the user is on.
+const NO_MODELS_HINT: &str = "No models available at this endpoint. \
+    For LM Studio: load a model in the Developer tab and start the server. \
+    For Ollama: run `ollama pull <model>`.";
+
 pub async fn fetch_models(base_url: &str, api_key: Option<&str>) -> Result<Vec<String>, String> {
     let client = Client::builder()
         .timeout(REQUEST_TIMEOUT)
@@ -186,6 +206,10 @@ pub async fn fetch_models(base_url: &str, api_key: Option<&str>) -> Result<Vec<S
             .header("X-Title", "hChat");
     }
 
+    // Track "200 with empty data" separately from "didn't respond at all" so
+    // we can tell LM-Studio-with-no-model-loaded (helpful hint) apart from
+    // server-not-running (raw connection error).
+    let mut openai_responded_empty = false;
     if let Ok(resp) = request.send().await {
         if resp.status().is_success() {
             if let Ok(openai_resp) = resp.json::<OpenAIModelsResponse>().await {
@@ -193,24 +217,35 @@ pub async fn fetch_models(base_url: &str, api_key: Option<&str>) -> Result<Vec<S
                 if !models.is_empty() {
                     return Ok(models);
                 }
+                openai_responded_empty = true;
             }
         }
     }
 
     // Fall back to Ollama /api/tags
     let api_base = url.trim_end_matches("/v1");
-    let resp = client
-        .get(format!("{api_base}/api/tags"))
-        .send()
-        .await
-        .map_err(|e| format!("Failed to fetch models: {e}"))?;
+    let tags_result: Result<Vec<String>, String> =
+        match client.get(format!("{api_base}/api/tags")).send().await {
+            Ok(r) if r.status().is_success() => r
+                .json::<OllamaTagsResponse>()
+                .await
+                .map(|t| t.models.into_iter().map(|m| m.name).collect())
+                .map_err(|e| format!("Failed to parse models: {e}")),
+            Ok(r) => Err(format!("Models endpoint returned {}", r.status())),
+            Err(e) => Err(format!("Failed to fetch models: {e}")),
+        };
 
-    let tags: OllamaTagsResponse = resp
-        .json()
-        .await
-        .map_err(|e| format!("Failed to parse models: {e}"))?;
-
-    Ok(tags.models.into_iter().map(|m| m.name).collect())
+    match tags_result {
+        Ok(m) if !m.is_empty() => Ok(m),
+        // Ollama path returned an empty list (server reachable, nothing
+        // pulled) — surface the actionable hint, not a silent empty dropdown.
+        Ok(_) => Err(NO_MODELS_HINT.to_string()),
+        // Ollama path errored but OpenAI returned 200 with empty data — this
+        // is the LM-Studio-no-model-loaded case. Use the hint instead of the
+        // raw Ollama parse/404 error, which would be misleading.
+        Err(_) if openai_responded_empty => Err(NO_MODELS_HINT.to_string()),
+        Err(e) => Err(e),
+    }
 }
 
 pub struct ChatParams {
@@ -278,6 +313,9 @@ pub fn stream_chat(
             presence_penalty,
             stop_sequences,
             tools,
+            stream_options: Some(StreamOptions {
+                include_usage: true,
+            }),
         };
 
         let mut request = client.post(&url).json(&req);

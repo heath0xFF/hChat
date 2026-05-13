@@ -2,7 +2,7 @@
 
 A lightweight desktop chat client for local LLMs. Built in Rust with [egui](https://github.com/emilk/egui) for a minimal, fast UI.
 
-Connects to any OpenAI API-compatible endpoint. Defaults to [Ollama](https://ollama.com) at `localhost:11434`.
+Connects to any OpenAI API-compatible endpoint. Defaults to [LM Studio](https://lmstudio.ai) at `localhost:1234`.
 
 ## Features
 
@@ -26,13 +26,37 @@ Connects to any OpenAI API-compatible endpoint. Defaults to [Ollama](https://oll
 - **Live token counter** in the input footer (tiktoken-cached) plus post-response usage and cost display
 - System prompt, temperature, max tokens — plus **advanced sampling controls** (`top_p`, `frequency_penalty`, `presence_penalty`, stop sequences)
 - Multiple saved API endpoints with per-endpoint API key support
-- Works with OpenRouter, LM Studio, vLLM, Ollama, and any OpenAI-compatible API
+- Works with LM Studio, Ollama, OpenRouter, vLLM, and any OpenAI-compatible API
 - Hover timestamps on messages
 - Empty-state starter prompts to kick off new chats
 - Dark/light theme toggle
 - Persistent settings via TOML config (`~/.config/hchat/config.toml`) — corrupted files are backed up rather than silently reset
 - Configurable font sizes, custom fonts, and UI scale
 - Cross-platform (Linux, macOS)
+
+## Prerequisites
+
+hChat is a client — it needs an OpenAI-compatible chat completions endpoint to talk to. Pick whichever you prefer:
+
+### LM Studio (default)
+
+1. Download from [lmstudio.ai](https://lmstudio.ai).
+2. Inside LM Studio, search for and download a model (e.g. `qwen2.5-coder-7b-instruct`).
+3. Switch to the **Developer** tab, load the model, and start the local server.
+4. LM Studio's server exposes three API dialects on port 1234 — a native LM Studio API under `/api/v1/...`, an OpenAI-compatible API under `/v1/...`, and an Anthropic-compatible `/v1/messages`. hChat speaks the OpenAI-compatible routes, so the default endpoint is `http://localhost:1234/v1` — no extra configuration required.
+
+### Ollama
+
+1. Install from [ollama.com](https://ollama.com) (or your package manager).
+2. Pull a model: `ollama pull qwen2.5-coder:7b`.
+3. Run `ollama serve` (it auto-starts on macOS).
+4. In hChat, click `+` next to the endpoint selector and add `http://localhost:11434/v1` — or set it as `default_endpoint` in `config.toml`.
+
+### Remote APIs
+
+OpenRouter, OpenAI, vLLM, Together, or any other OpenAI-compatible host works. You'll need the base URL and an API key — see [Using OpenRouter or other remote APIs](#using-openrouter-or-other-remote-apis) below.
+
+If hChat can reach the endpoint but reports "No models available", you started the server but haven't loaded (LM Studio) or pulled (Ollama) a model yet.
 
 ## Install
 
@@ -85,13 +109,7 @@ cargo run --release
 
 ## Launch
 
-Make sure your local LLM server is running first:
-
-```bash
-ollama serve
-```
-
-Then launch hChat:
+With your LLM server already running (see [Prerequisites](#prerequisites)):
 
 ```bash
 # Linux: run detached so it doesn't tie up your terminal
@@ -103,7 +121,7 @@ open /Applications/hChat.app
 hchat &disown
 ```
 
-hChat connects to `http://localhost:11434/v1` by default. You can change the endpoint in the top bar.
+hChat connects to `http://localhost:1234/v1` (LM Studio) by default. Switch endpoints from the top bar dropdown, or add new ones via the `+` button.
 
 ### Using OpenRouter or other remote APIs
 
@@ -131,7 +149,7 @@ Set `font_family` and `mono_font_family` to any font installed on your system. h
 
 ### API keys
 
-API keys are stored per-endpoint in `config.toml`. Endpoints that don't need authentication (like local Ollama) simply omit the `api_key` field. Keys are sent as `Authorization: Bearer` headers.
+API keys are stored per-endpoint in `config.toml`. Endpoints that don't need authentication (like local LM Studio or Ollama) simply omit the `api_key` field. Keys are sent as `Authorization: Bearer` headers.
 
 ## Tools
 
