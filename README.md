@@ -54,7 +54,7 @@ hChat is a client — it needs an OpenAI-compatible chat completions endpoint to
 
 ### oMLX
 
-1. Download from [github.com/heath0xFF/oMLX](https://github.com/heath0xFF/oMLX).
+1. Download from [omlx.ai](https://omlx.ai).
 2. oMLX runs from the macOS menu bar — it handles model loading, continuous batching, and SSD caching automatically.
 3. By default oMLX exposes an OpenAI-compatible endpoint at `http://localhost:8000/v1`. Add it in hChat via the `+` button, or set it as `default_endpoint` in `config.toml`.
 
