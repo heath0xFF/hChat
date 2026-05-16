@@ -26,7 +26,7 @@ Connects to any OpenAI API-compatible endpoint. Defaults to [LM Studio](https://
 - **Live token counter** in the input footer (tiktoken-cached) plus post-response usage and cost display
 - System prompt, temperature, max tokens — plus **advanced sampling controls** (`top_p`, `frequency_penalty`, `presence_penalty`, stop sequences)
 - Multiple saved API endpoints with per-endpoint API key support
-- Works with LM Studio, Ollama, OpenRouter, vLLM, and any OpenAI-compatible API
+- Works with LM Studio, Ollama, oMLX, OpenRouter, vLLM, and any OpenAI-compatible API
 - Hover timestamps on messages
 - Empty-state starter prompts to kick off new chats
 - Dark/light theme toggle
@@ -51,6 +51,12 @@ hChat is a client — it needs an OpenAI-compatible chat completions endpoint to
 2. Pull a model: `ollama pull qwen2.5-coder:7b`.
 3. Run `ollama serve` (it auto-starts on macOS).
 4. In hChat, click `+` next to the endpoint selector and add `http://localhost:11434/v1` — or set it as `default_endpoint` in `config.toml`.
+
+### oMLX
+
+1. Download from [github.com/heath0xFF/oMLX](https://github.com/heath0xFF/oMLX).
+2. oMLX runs from the macOS menu bar — it handles model loading, continuous batching, and SSD caching automatically.
+3. By default oMLX exposes an OpenAI-compatible endpoint at `http://localhost:8000/v1`. Add it in hChat via the `+` button, or set it as `default_endpoint` in `config.toml`.
 
 ### Remote APIs
 
