@@ -73,7 +73,7 @@ jobs:
       - name: Package .app
         run: |
           cd target/dist/bundle/osx
-          zip -r ../../../../hChat.app.zip hChat.app
+          zip -r ../../../../hChat-arm64.app.zip hChat.app
           cd ../../../..
 
       - name: Upload artifacts
@@ -82,7 +82,7 @@ jobs:
           name: macos-arm64-artifacts
           path: |
             hchat-macos-arm64.tar.gz
-            hChat.app.zip
+            hChat-arm64.app.zip
 
   build-macos-x86_64:
     runs-on: macos-latest
@@ -97,17 +97,30 @@ jobs:
       - name: Build
         run: cargo build --profile dist --target x86_64-apple-darwin
 
+      - name: Create .app bundle
+        run: |
+          cargo install cargo-bundle
+          cargo bundle --profile dist --target x86_64-apple-darwin
+
       - name: Package binary
         run: |
           cd target/x86_64-apple-darwin/dist
           tar czf ../../../hchat-macos-x86_64.tar.gz hchat
           cd ../../..
 
+      - name: Package .app
+        run: |
+          cd target/x86_64-apple-darwin/dist/bundle/osx
+          zip -r ../../../../../hChat-x86_64.app.zip hChat.app
+          cd ../../../../..
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v5
         with:
           name: macos-x86_64-artifacts
-          path: hchat-macos-x86_64.tar.gz
+          path: |
+            hchat-macos-x86_64.tar.gz
+            hChat-x86_64.app.zip
 
   release:
     needs: [build-linux, build-macos-arm64, build-macos-x86_64]
@@ -130,7 +143,8 @@ jobs:
             artifacts/*.deb
             artifacts/hchat-macos-arm64.tar.gz
             artifacts/hchat-macos-x86_64.tar.gz
-            artifacts/hChat.app.zip
+            artifacts/hChat-arm64.app.zip
+            artifacts/hChat-x86_64.app.zip
 
   update-homebrew:
     needs: [release]
@@ -147,6 +161,8 @@ jobs:
           VERSION="${GITHUB_REF_NAME#v}"
           SHA_ARM64=$(sha256sum artifacts/hchat-macos-arm64.tar.gz | awk '{print $1}')
           SHA_X86_64=$(sha256sum artifacts/hchat-macos-x86_64.tar.gz | awk '{print $1}')
+          SHA_APP_ARM64=$(sha256sum artifacts/hChat-arm64.app.zip | awk '{print $1}')
+          SHA_APP_X86_64=$(sha256sum artifacts/hChat-x86_64.app.zip | awk '{print $1}')
 
           cat > hchat.rb <<FORMULA
           class Hchat < Formula
@@ -174,17 +190,48 @@ jobs:
           # Remove leading whitespace from heredoc
           sed -i 's/^          //' hchat.rb
 
+          cat > hchat_cask.rb <<CASK
+          cask "hchat" do
+            arch arm: "arm64", intel: "x86_64"
+
+            version "${VERSION}"
+            sha256 arm:   "${SHA_APP_ARM64}",
+                   intel: "${SHA_APP_X86_64}"
+
+            url "https://github.com/heath0xFF/hChat/releases/download/v#{version}/hChat-#{arch}.app.zip"
+            name "hChat"
+            desc "Lightweight desktop chat client for local LLMs"
+            homepage "https://github.com/heath0xFF/hChat"
+
+            app "hChat.app"
+
+            postflight do
+              system_command "/usr/bin/xattr",
+                             args: ["-dr", "com.apple.quarantine", "#{appdir}/hChat.app"]
+            end
+
+            zap trash: [
+              "~/.config/hchat",
+              "~/Library/Application Support/hchat",
+              "~/Library/Application Support/hchat.db",
+            ]
+          end
+          CASK
+
+          sed -i 's/^          //' hchat_cask.rb
+
       - name: Push formula to tap
         env:
           TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
           git clone https://x-access-token:${TAP_TOKEN}@github.com/heath0xFF/homebrew-tap.git tap
-          mkdir -p tap/Formula
+          mkdir -p tap/Formula tap/Casks
           cp hchat.rb tap/Formula/hchat.rb
+          cp hchat_cask.rb tap/Casks/hchat.rb
           cd tap
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/hchat.rb
+          git add Formula/hchat.rb Casks/hchat.rb
           git diff --cached --quiet && exit 0
           git commit -m "Update hchat to ${GITHUB_REF_NAME#v}"
           git push

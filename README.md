@@ -70,6 +70,15 @@ Download the latest release from [GitHub Releases](https://github.com/heath0xFF/
 
 ### macOS (Homebrew)
 
+For a launchable app (shows in Spotlight/Launchpad, runs detached):
+
+```bash
+brew tap heath0xFF/tap
+brew install --cask hchat
+```
+
+For the command-line binary only:
+
 ```bash
 brew tap heath0xFF/tap
 brew install hchat
@@ -78,8 +87,12 @@ brew install hchat
 To update to the latest release:
 
 ```bash
-brew update && brew upgrade hchat
+brew update
+brew upgrade --cask hchat   # or: brew upgrade hchat
 ```
+
+> The `.app` is not code-signed; the cask clears the Gatekeeper
+> quarantine flag on install so it launches normally.
 
 ### macOS (manual)
 
@@ -88,8 +101,8 @@ brew update && brew upgrade hchat
 tar xzf hchat-macos-arm64.tar.gz
 mv hchat /usr/local/bin/
 
-# Or use the .app bundle
-unzip hChat.app.zip -d /Applications
+# Or use the .app bundle (use -x86_64 on Intel Macs)
+unzip hChat-arm64.app.zip -d /Applications
 ```
 
 ### Debian/Ubuntu
