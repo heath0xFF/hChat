@@ -3232,12 +3232,14 @@ fn render_code_block(ui: &mut egui::Ui, lang: &str, body: &str) {
                 });
             });
             // Use a selectable Label rather than a non-interactive TextEdit so
-            // users can drag-select a snippet for partial copy. Label respects
-            // newlines, so the visual layout of code is preserved.
+            // users can drag-select a snippet for partial copy. Wrap long lines
+            // at the panel width — the message area scrolls vertically only, so
+            // Extend would push content off-screen with no way to read it.
+            // Explicit newlines in `body` are still honored.
             ui.add(
                 egui::Label::new(egui::RichText::new(body).monospace())
                     .selectable(true)
-                    .wrap_mode(egui::TextWrapMode::Extend),
+                    .wrap_mode(egui::TextWrapMode::Wrap),
             );
         });
 }
