@@ -1,0 +1,81 @@
+{
+  "cli_version": "0.6.1",
+  "checkpoint_id": "f6146e55e30a",
+  "session_id": "83b5b405-55ca-44ec-a1de-78b71ae448ba",
+  "strategy": "manual-commit",
+  "created_at": "2026-05-17T01:11:20.025845Z",
+  "branch": "main",
+  "checkpoints_count": 4,
+  "files_touched": [
+    ".github/workflows/release.yml",
+    "README.md"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-opus-4-7[1m]",
+  "turn_id": "1051b16f57e5",
+  "token_usage": {
+    "input_tokens": 70,
+    "cache_creation_tokens": 43743,
+    "cache_read_tokens": 1490910,
+    "output_tokens": 26235,
+    "api_call_count": 36
+  },
+  "session_metrics": {
+    "turn_count": 5
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-05-17T01:11:20.021477Z",
+    "agent_lines": 69,
+    "agent_removed": 9,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 69,
+    "total_lines_changed": 78,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 5,
+      "user_lines_removed": 1,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".claude/settings.local.json": 5
+      },
+      "user_removed_per_file": {
+        ".claude/settings.local.json": 1
+      }
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 69,
+      "agent_lines_removed": 10
+    },
+    {
+      "checkpoint_number": 3,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 69,
+      "agent_lines_removed": 10
+    },
+    {
+      "checkpoint_number": 4,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 69,
+      "agent_lines_removed": 10
+    },
+    {
+      "checkpoint_number": 5,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 74,
+      "agent_lines_removed": 10
+    }
+  ]
+}

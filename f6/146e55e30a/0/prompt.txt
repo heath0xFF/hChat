@@ -1,0 +1,23 @@
+right now, hchat installed via brew (at least how i install it)... how do i make it an application that i can just run? rather than having to go to the terminal and runnign `hchat &disown`?
+
+---
+
+right now, hchat installed via brew (at least how i install it)... how do i make it an application that i can just run? rather than having to go to the terminal and runnign `hchat &disown`?
+
+---
+
+that's fine. 
+
+how do we make this what happens when anyone else does the same with hchat (installs via homebrew)?
+
+---
+
+does anything need to change in https://github.com/heath0xff/homebrew-tap
+
+---
+
+ok so what then is the order of operations then?
+
+---
+
+yeah for sure quarantine false lol
