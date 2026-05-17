@@ -22,7 +22,11 @@
       "Read(//private/tmp/**)",
       "Bash(gh pr *)",
       "Bash(gh run *)",
-      "Bash(curl *)"
+      "Bash(curl *)",
+      "Bash(chmod +x /Applications/hChat.app/Contents/MacOS/hChat)",
+      "Bash(/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f /Applications/hChat.app)",
+      "Bash(touch /Applications/hChat.app)",
+      "Read(//Applications/hChat.app/**)"
     ]
   }
 }
