@@ -1,0 +1,11 @@
+<task-notification>
+<task-id>bmbrh6p8j</task-id>
+<tool-use-id>toolu_014rCCRARVEQYFKUgeAxcVER</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-heath-code-hChat/83b5b405-55ca-44ec-a1de-78b71ae448ba/tasks/bmbrh6p8j.output</output-file>
+<status>completed</status>
+<summary>Background command "Watch v0.9.3 release run to completion" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+ok next thing i want to fix is that when using thinking models, well i guess just qwen 3.6 so far, the chats are all named "thinking..." [Image #2] how do we fix?
