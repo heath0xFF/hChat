@@ -732,11 +732,16 @@ impl ChatApp {
         self.storage.mark_auto_titled(conv_id);
         // Append the title-instruction as the final user turn.
         let mut ctx_messages = messages;
+        // `/no_think` is Qwen3's soft switch to skip chain-of-thought for this
+        // turn — without it a reasoning model burns the whole token budget
+        // thinking and never emits the title. Harmless filler text to models
+        // that don't recognize it; reasoning that leaks anyway is stripped on
+        // receipt (see strip_reasoning in process_events).
         ctx_messages.push(Message::text(
             Role::User,
-            "Provide a title for this conversation in 6 words or fewer. \
-             Reply with only the title text — no quotes, no punctuation at \
-             the end, no preamble."
+            "/no_think Provide a title for this conversation in 6 words or \
+             fewer. Reply with only the title text — no quotes, no punctuation \
+             at the end, no preamble."
                 .to_string(),
         ));
 
@@ -756,7 +761,11 @@ impl ChatApp {
                 &model,
                 &ctx_messages,
                 api_key.as_deref(),
-                Some(32),
+                // Generous ceiling: if a reasoning model ignores `/no_think`
+                // it needs room to finish thinking *and* still emit the title
+                // (which strip_reasoning then extracts). The title itself is
+                // tiny; non-thinking models stop well before this.
+                Some(2048),
                 Some(0.3),
             )
             .await;
@@ -1174,7 +1183,7 @@ impl ChatApp {
             // `request_auto_title`) — we only update the title text here.
             for (conv_id, res) in title_results {
                 if let Ok(title) = res {
-                    let cleaned = sanitize_title(&title);
+                    let cleaned = sanitize_title(&markdown::strip_reasoning(&title));
                     if !cleaned.is_empty() {
                         self.storage.update_conversation_title(conv_id, &cleaned);
                     }

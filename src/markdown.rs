@@ -130,6 +130,30 @@ pub fn segments(text: &str) -> Vec<Segment<'_>> {
     out
 }
 
+/// Returns `text` with `<think>`/`<thinking>` reasoning blocks removed,
+/// keeping prose and code. Used for non-rendered consumers (e.g. auto-title)
+/// that must not treat a reasoning model's chain-of-thought as the answer.
+/// An unterminated reasoning block (model still mid-thought) drops everything
+/// from the open tag onward, yielding an empty string for the caller to
+/// fall back on.
+pub fn strip_reasoning(text: &str) -> String {
+    let mut out = String::new();
+    for seg in segments(text) {
+        match seg {
+            Segment::Markdown(s) => out.push_str(s),
+            Segment::Code { lang, body } => {
+                out.push_str("```");
+                out.push_str(lang);
+                out.push('\n');
+                out.push_str(body);
+                out.push_str("\n```");
+            }
+            Segment::Reasoning { .. } => {}
+        }
+    }
+    out.trim().to_string()
+}
+
 fn flush_prose<'a>(text: &'a str, start: usize, end: usize, out: &mut Vec<Segment<'a>>) {
     if start < end {
         out.push(Segment::Markdown(&text[start..end]));
@@ -261,6 +285,24 @@ mod tests {
         let s = "see <think> tag here";
         let out = segments(s);
         assert_eq!(out, vec![Segment::Markdown(s)]);
+    }
+
+    #[test]
+    fn strip_reasoning_removes_closed_think() {
+        let s = "<think>\nlots of planning\n</think>\nMy Title";
+        assert_eq!(strip_reasoning(s), "My Title");
+    }
+
+    #[test]
+    fn strip_reasoning_unclosed_yields_empty() {
+        // Model burned its budget mid-thought, never reached the title.
+        let s = "<think>\n1. Analyze the request. The user wants a title";
+        assert_eq!(strip_reasoning(s), "");
+    }
+
+    #[test]
+    fn strip_reasoning_passthrough_when_no_think() {
+        assert_eq!(strip_reasoning("Just A Plain Title"), "Just A Plain Title");
     }
 
     #[test]
