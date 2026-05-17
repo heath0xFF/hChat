@@ -1,0 +1,11 @@
+<task-notification>
+<task-id>beg1hbtm4</task-id>
+<tool-use-id>REDACTED</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-heath-code-hChat/83b5b405-55ca-44ec-a1de-78b71ae448ba/tasks/beg1hbtm4.output</output-file>
+<status>completed</status>
+<summary>Background command "Watch release run to completion" completed (exit code 0)</summary>
+</task-notification>
+
+---
+
+alright have a problem... there's a bug around word wrapping [Image #1]
