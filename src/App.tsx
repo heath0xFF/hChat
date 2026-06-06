@@ -29,6 +29,7 @@ import {
 import { parseSlash, SLASH_HELP } from "./lib/slash";
 import { parseThink } from "./lib/segments";
 import { countTokens } from "./lib/tokens";
+import { matchCombo, comboIsBare, isTypingTarget } from "./lib/hotkeys";
 
 const EMPTY_METRICS: LiveMetrics = {
   decode: null,
@@ -130,10 +131,12 @@ export function App() {
   const [composerInput, setComposerInput] = useState("");
   const [tokenCount, setTokenCount] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
+  const [focusSignal, setFocusSignal] = useState(0);
 
   const reasoningBuf = useRef("");
   const contentBuf = useRef("");
   const convIdRef = useRef<number | null>(null);
+  const hotkeyRef = useRef<(e: KeyboardEvent) => void>(() => {});
 
   const refreshConversations = useCallback(async () => {
     setConversations(await api.listConversations());
@@ -200,6 +203,13 @@ export function App() {
   useEffect(() => {
     if (config) applyAppearance(config);
   }, [config]);
+
+  // Global hotkeys — bound once, dispatched through a ref to the latest closure.
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => hotkeyRef.current(e);
+    window.addEventListener("keydown", h);
+    return () => window.removeEventListener("keydown", h);
+  }, []);
 
   // Re-collect artifacts whenever the visible message path changes.
   useEffect(() => {
@@ -670,6 +680,25 @@ export function App() {
     return <div className="empty" style={{ height: "100vh" }}>Loading…</div>;
   }
 
+  hotkeyRef.current = (e: KeyboardEvent) => {
+    if (!config) return;
+    const hk = config.hotkeys;
+    const fire = (combo: string, fn: () => void): boolean => {
+      if (!matchCombo(e, combo)) return false;
+      if (comboIsBare(combo) && isTypingTarget(e)) return false;
+      e.preventDefault();
+      fn();
+      return true;
+    };
+    fire(hk.settings, () => setShowSettings(true)) ||
+      fire(hk.new_chat, newChat) ||
+      fire(hk.toggle_artifacts, toggleArtifacts) ||
+      fire(hk.focus_input, () => setFocusSignal((s) => s + 1)) ||
+      fire(hk.stop, () => {
+        if (streaming) void stop();
+      });
+  };
+
   const showArtifact = artifactOpen && currentArtifact;
 
   return (
@@ -719,6 +748,8 @@ export function App() {
             input={composerInput}
             onInputChange={setComposerInput}
             tokenCount={tokenCount}
+            findCombo={config.hotkeys.find}
+            focusSignal={focusSignal}
             onResolveTool={resolveTool}
             onSend={send}
             onSlash={handleSlash}

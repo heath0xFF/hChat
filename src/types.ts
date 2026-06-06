@@ -1,8 +1,24 @@
 // Mirrors the Rust DTOs in src-tauri/src/commands.rs
 
+export type RuntimeKind = "vllm" | "omlx" | "llamacpp" | "llamaswap" | "openai";
+export type GpuKind = "none" | "macmon" | "agent";
+
 export interface Endpoint {
   url: string;
   api_key?: string | null;
+  runtime?: RuntimeKind;
+  prometheus_url?: string | null;
+  gpu?: GpuKind;
+  agent_url?: string | null;
+}
+
+export interface Hotkeys {
+  new_chat: string;
+  focus_input: string;
+  find: string;
+  settings: string;
+  toggle_artifacts: string;
+  stop: string;
 }
 
 export interface Config {
@@ -22,6 +38,7 @@ export interface Config {
   frequency_penalty: number | null;
   presence_penalty: number | null;
   stop_sequences: string[];
+  hotkeys: Hotkeys;
 }
 
 export interface ConversationDto {

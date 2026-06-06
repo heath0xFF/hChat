@@ -83,6 +83,18 @@ use_max_tokens = false
 # Default: "http://localhost:1234/v1"
 default_endpoint = "http://localhost:1234/v1"
 
+# --- Keyboard shortcuts ---
+# Rebindable in Settings → Keyboard, or here. Combos use `mod+key` where `mod`
+# is Cmd on macOS / Ctrl elsewhere (e.g. "mod+n", "mod+shift+f", "escape").
+# (This table must appear before the [[saved_endpoints]] entries below.)
+[hotkeys]
+new_chat = "mod+n"
+focus_input = "mod+l"
+find = "mod+f"
+settings = "mod+,"
+toggle_artifacts = "mod+j"
+stop = "mod+."
+
 # saved_endpoints: A list of AI providers and models you want to connect to.
 # Each endpoint requires a `url` and optionally an `api_key`.
 # If `api_key` is omitted, no Authorization header will be sent (perfect for local instances like LM Studio).

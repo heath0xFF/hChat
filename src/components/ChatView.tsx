@@ -9,6 +9,7 @@ import type {
 import type { ChatMessage } from "./MessageItem";
 import { MessageItem } from "./MessageItem";
 import { ApprovalCard, type ApprovalDecision } from "./ApprovalCard";
+import { matchCombo } from "../lib/hotkeys";
 
 interface Props {
   config: Config;
@@ -21,6 +22,8 @@ interface Props {
   input: string;
   onInputChange: (v: string | ((prev: string) => string)) => void;
   tokenCount: number;
+  findCombo: string;
+  focusSignal: number;
   onResolveTool: (decision: ApprovalDecision) => void;
   onSend: (text: string, images: string[]) => void;
   onSlash: (input: string) => boolean;
@@ -96,10 +99,10 @@ export function ChatView(props: Props) {
   }, [findQuery, props.messages]);
   const matchSet = useMemo(() => new Set(matches), [matches]);
 
-  // Cmd/Ctrl+F toggles find; Esc closes it.
+  // Configurable find shortcut toggles the find bar; Esc closes it.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
+      if (matchCombo(e, props.findCombo)) {
         e.preventDefault();
         setFindOpen((v) => !v);
         setTimeout(() => findRef.current?.focus(), 0);
@@ -109,7 +112,12 @@ export function ChatView(props: Props) {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [findOpen]);
+  }, [findOpen, props.findCombo]);
+
+  // Focus the composer when the focus hotkey fires.
+  useEffect(() => {
+    if (props.focusSignal > 0) taRef.current?.focus();
+  }, [props.focusSignal]);
 
   // Scroll the active match into view.
   useEffect(() => {

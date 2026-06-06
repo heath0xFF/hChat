@@ -126,6 +126,33 @@ impl Endpoint {
     }
 }
 
+/// User-rebindable keyboard shortcuts. Combos use a simple `mod+key` syntax
+/// where `mod` is Cmd on macOS / Ctrl elsewhere (e.g. `mod+n`, `mod+shift+f`,
+/// `escape`). Interpreted on the frontend.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+#[serde(default)]
+pub struct Hotkeys {
+    pub new_chat: String,
+    pub focus_input: String,
+    pub find: String,
+    pub settings: String,
+    pub toggle_artifacts: String,
+    pub stop: String,
+}
+
+impl Default for Hotkeys {
+    fn default() -> Self {
+        Self {
+            new_chat: "mod+n".to_string(),
+            focus_input: "mod+l".to_string(),
+            find: "mod+f".to_string(),
+            settings: "mod+,".to_string(),
+            toggle_artifacts: "mod+j".to_string(),
+            stop: "mod+.".to_string(),
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
 pub struct Config {
@@ -148,6 +175,8 @@ pub struct Config {
     pub presence_penalty: Option<f32>,
     /// Stop sequences. Empty vec → don't send.
     pub stop_sequences: Vec<String>,
+    /// Rebindable keyboard shortcuts.
+    pub hotkeys: Hotkeys,
 }
 
 impl Default for Config {
@@ -169,6 +198,7 @@ impl Default for Config {
             frequency_penalty: None,
             presence_penalty: None,
             stop_sequences: Vec::new(),
+            hotkeys: Hotkeys::default(),
         }
     }
 }
@@ -314,5 +344,21 @@ impl Config {
             ep.url = ep.url.trim().to_string();
         }
         self.saved_endpoints.retain(|ep| !ep.url.is_empty());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn example_config_parses_and_sanitizes() {
+        let raw = include_str!("../../example.config.toml");
+        let mut cfg: Config = toml::from_str(raw).expect("example.config.toml must be valid TOML");
+        cfg.sanitize();
+        // Hotkeys table is present with the documented defaults.
+        assert_eq!(cfg.hotkeys.settings, "mod+,");
+        assert_eq!(cfg.hotkeys.new_chat, "mod+n");
+        assert!(!cfg.saved_endpoints.is_empty());
     }
 }
