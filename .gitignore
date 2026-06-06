@@ -1,2 +1,15 @@
+# Rust / Cargo
 /target
+/src-tauri/target
+
+# Node / frontend
+/node_modules
+/dist
+/.npm-cache
+
+# Tauri generated
+/src-tauri/gen/schemas
+
+# Misc
 /claude-docs
+.DS_Store

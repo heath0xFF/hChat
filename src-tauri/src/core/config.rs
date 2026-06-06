@@ -129,7 +129,7 @@ impl Config {
                 }
             }
             Err(e) if e.kind() == io::ErrorKind::NotFound => {
-                let example_config = include_str!("../example.config.toml");
+                let example_config = include_str!("../../example.config.toml");
                 if let Some(parent) = path.parent() {
                     let _ = fs::create_dir_all(parent);
                     #[cfg(unix)]
