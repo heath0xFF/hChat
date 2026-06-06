@@ -1,0 +1,27 @@
+{
+  "cli_version": "0.7.3",
+  "checkpoint_id": "37815d780366",
+  "strategy": "manual-commit",
+  "branch": "rewrite-tauri",
+  "checkpoints_count": 0,
+  "files_touched": [
+    "AGENTS.md",
+    "CLAUDE.md",
+    "README.md"
+  ],
+  "sessions": [
+    {
+      "metadata": "/37/815d780366/0/metadata.json",
+      "transcript": "/37/815d780366/0/full.jsonl",
+      "content_hash": "/37/815d780366/0/content_hash.txt",
+      "prompt": "/37/815d780366/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 303,
+    "cache_creation_tokens": 19978,
+    "cache_read_tokens": 2643959,
+    "output_tokens": 12147,
+    "api_call_count": 7
+  }
+}

@@ -1,0 +1,1 @@
+i think now would be a good time to update the README, update CLAUDE.md & AGENTS.md
