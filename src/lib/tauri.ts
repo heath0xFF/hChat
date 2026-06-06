@@ -74,4 +74,7 @@ export const api = {
   createPreset: (name: string, gp: GenParams) =>
     invoke<number>("create_preset", { name, gp }),
   deletePreset: (id: number) => invoke<void>("delete_preset", { id }),
+
+  setMetricsTarget: (endpoint: string) =>
+    invoke<void>("set_metrics_target", { endpoint }),
 };

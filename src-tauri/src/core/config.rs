@@ -12,11 +12,57 @@ fn set_dir_permissions(path: &std::path::Path) {
 
 const MAX_CONFIG_SIZE: u64 = 1_048_576; // 1 MB
 
+/// Which inference server is behind an endpoint. Drives how the metrics
+/// dashboard interprets it (Prometheus dialect, GPU source defaults).
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum Runtime {
+    Vllm,
+    Omlx,
+    #[serde(rename = "llamacpp")]
+    LlamaCpp,
+    /// Generic OpenAI-compatible (incl. cloud like OpenRouter). No GPU metrics.
+    #[default]
+    Openai,
+}
+
+/// Where to pull GPU stats (VRAM/power/temp/util) for this endpoint's host.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum GpuKind {
+    /// No GPU metrics (cloud, or not configured).
+    #[default]
+    None,
+    /// Local Apple Silicon GPU via the macmon sampler (no sudo).
+    Macmon,
+    /// A remote `hchat-agent` exposing nvidia-smi + /proc/meminfo over HTTP.
+    Agent,
+}
+
+fn runtime_is_default(r: &Runtime) -> bool {
+    *r == Runtime::Openai
+}
+fn gpu_is_default(g: &GpuKind) -> bool {
+    *g == GpuKind::None
+}
+
 #[derive(Serialize, Clone, Debug)]
 pub struct Endpoint {
     pub url: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub api_key: Option<String>,
+    /// Inference runtime behind this endpoint (for metrics interpretation).
+    #[serde(default, skip_serializing_if = "runtime_is_default")]
+    pub runtime: Runtime,
+    /// Prometheus `/metrics` URL to scrape (vLLM, or llama.cpp with `--metrics`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prometheus_url: Option<String>,
+    /// GPU metrics source for this endpoint's host.
+    #[serde(default, skip_serializing_if = "gpu_is_default")]
+    pub gpu: GpuKind,
+    /// `hchat-agent` base URL when `gpu = agent` (e.g. http://spark:9099).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_url: Option<String>,
 }
 
 impl<'de> Deserialize<'de> for Endpoint {
@@ -30,13 +76,36 @@ impl<'de> Deserialize<'de> for Endpoint {
             Simple(String),
             Full {
                 url: String,
+                #[serde(default)]
                 api_key: Option<String>,
+                #[serde(default)]
+                runtime: Runtime,
+                #[serde(default)]
+                prometheus_url: Option<String>,
+                #[serde(default)]
+                gpu: GpuKind,
+                #[serde(default)]
+                agent_url: Option<String>,
             },
         }
 
         match EndpointRepr::deserialize(deserializer)? {
-            EndpointRepr::Simple(url) => Ok(Endpoint { url, api_key: None }),
-            EndpointRepr::Full { url, api_key } => Ok(Endpoint { url, api_key }),
+            EndpointRepr::Simple(url) => Ok(Endpoint::new(url)),
+            EndpointRepr::Full {
+                url,
+                api_key,
+                runtime,
+                prometheus_url,
+                gpu,
+                agent_url,
+            } => Ok(Endpoint {
+                url,
+                api_key,
+                runtime,
+                prometheus_url,
+                gpu,
+                agent_url,
+            }),
         }
     }
 }
@@ -46,6 +115,10 @@ impl Endpoint {
         Self {
             url: url.into(),
             api_key: None,
+            runtime: Runtime::default(),
+            prometheus_url: None,
+            gpu: GpuKind::default(),
+            agent_url: None,
         }
     }
 }

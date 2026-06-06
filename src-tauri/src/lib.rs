@@ -17,14 +17,23 @@ pub mod markdown;
 pub mod tools;
 
 mod commands;
+mod metrics;
 mod state;
 
 use state::AppState;
+use tauri::Manager;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .manage(AppState::new())
+        .setup(|app| {
+            // Spawn the metrics poller + macmon thread; expose the active-target
+            // handle so commands can retarget it.
+            let target = metrics::start(app.handle().clone());
+            app.manage(metrics::MetricsHandle(target));
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::get_config,
             commands::save_config,
@@ -46,6 +55,7 @@ pub fn run() {
             commands::list_presets,
             commands::create_preset,
             commands::delete_preset,
+            commands::set_metrics_target,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

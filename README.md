@@ -15,10 +15,10 @@ VRAM, power, and GPU stats for each.
 > workstation on the `rewrite-tauri` branch.
 > - **Phase A — chat (done):** full-featured streaming chat with history,
 >   branching, tools, attachments, and presets.
-> - **Phase B — metrics dashboard (next):** real GPU stats via `macmon` (Mac) and
->   a small agent on the Spark, plus vLLM / llama.cpp Prometheus scraping. Today
->   the Status view shows client-measured decode/TTFT/prefill from your own
->   requests; VRAM/power land in this phase.
+> - **Phase B — metrics dashboard (core done):** live GPU stats via `macmon`
+>   (Apple Silicon, no sudo) and the `hchat-agent` on the Spark, plus vLLM /
+>   llama.cpp Prometheus scraping. The Status view shows decode/TTFT/prefill,
+>   requests, VRAM, power, temp, and per-GPU rows.
 > - **Phase C — artifacts sidebar (upcoming):** Claude-Desktop-style rendering of
 >   the markdown/code/HTML your models produce.
 
@@ -47,9 +47,10 @@ VRAM, power, and GPU stats for each.
   delete
 - **SQLite history** (WAL) with on-launch schema migrations — upgrades don't wipe
   data
-- **Status dashboard scaffold** — decode/TTFT/prefill/tokens/cost tiles plus
-  throughput & TTFT charts, measured client-side per request (full GPU/server
-  metrics arrive in Phase B)
+- **Live metrics dashboard** — per-backend decode/TTFT/prefill, requests, VRAM,
+  power, temp, KV-cache, and per-GPU rows, with throughput & TTFT charts.
+  Apple-Silicon GPU stats come from `macmon` (no sudo); remote NVIDIA boxes use
+  the bundled **`hchat-agent`**; vLLM/llama.cpp expose the rest via Prometheus
 - `config.toml` stays the source of truth and hand-editable
 - Cross-platform (macOS, Linux)
 
@@ -106,6 +107,50 @@ from the `+`/settings UI or in `config.toml`; switch from the top-bar dropdown.
 
 If hChat reaches an endpoint but reports "No models available", the server is up
 but no model is loaded/pulled.
+
+## Metrics dashboard
+
+The **Status** view (left rail) shows live inference metrics for the active
+conversation's backend. Per-request decode/TTFT/prefill is always measured
+client-side; richer stats are opt-in per endpoint in `config.toml`:
+
+```toml
+# llama.cpp on this Mac (start it with `llama-server --metrics`)
+[[saved_endpoints]]
+url = "http://localhost:8080/v1"
+runtime = "llamacpp"
+prometheus_url = "http://localhost:8080/metrics"   # decode/prefill/requests/KV
+
+# Remote DGX Spark running vLLM, GPU stats via the agent (below)
+[[saved_endpoints]]
+url = "http://spark:8000/v1"
+runtime = "vllm"
+prometheus_url = "http://spark:8000/metrics"
+gpu = "agent"
+agent_url = "http://spark:9099"
+```
+
+- **`runtime`** — `vllm` | `omlx` | `llamacpp` | `openai`
+- **`prometheus_url`** — scraped for decode/prefill tok/s, TTFT, requests, KV cache
+- **`gpu`** — `macmon` (Apple Silicon, no sudo) | `agent` (remote NVIDIA) | `none`.
+  Local endpoints on macOS default to `macmon` automatically, so VRAM/power/temp
+  show up with no config.
+
+### The Spark agent (`hchat-agent`)
+
+`nvidia-smi` can't report VRAM on the GB10/DGX Spark (CPU+GPU share unified
+memory), so a tiny zero-dependency exporter reads `nvidia-smi` *and*
+`/proc/meminfo` and serves them as JSON:
+
+```bash
+# build (on the Spark, or cross-compile for aarch64-unknown-linux-gnu) and run
+cd agent
+cargo build --release
+./target/release/hchat-agent --port 9099     # serves GET /gpu
+```
+
+Then point an endpoint at it with `gpu = "agent"` and
+`agent_url = "http://<spark>:9099"` as above.
 
 ## Configuration
 

@@ -90,6 +90,45 @@ export interface SiblingInfo {
   ids: number[];
 }
 
+export interface GpuDevice {
+  name: string;
+  util_pct: number;
+  mem_used_gb: number;
+  mem_total_gb: number;
+  temp_c: number;
+  power_w: number;
+  power_limit_w: number;
+}
+
+export interface GpuStats {
+  source: string;
+  vram_used_gb: number | null;
+  vram_total_gb: number | null;
+  power_w: number | null;
+  power_limit_w: number | null;
+  temp_c: number | null;
+  util_pct: number | null;
+  devices: GpuDevice[];
+}
+
+export interface ServerStats {
+  decode_tok_s: number | null;
+  prefill_tok_s: number | null;
+  ttft_ms: number | null;
+  requests_running: number | null;
+  requests_waiting: number | null;
+  kv_cache_pct: number | null;
+  prompt_tokens_total: number | null;
+  generation_tokens_total: number | null;
+}
+
+export interface MetricsSnapshot {
+  endpoint: string;
+  runtime: string;
+  gpu: GpuStats | null;
+  server: ServerStats | null;
+}
+
 export interface PresetDto {
   id: number;
   name: string;

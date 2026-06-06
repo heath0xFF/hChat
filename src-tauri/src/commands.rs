@@ -383,6 +383,56 @@ pub fn delete_preset(state: State<'_, AppState>, id: i64) {
     state.storage.lock().unwrap().delete_preset(id);
 }
 
+// ---------- metrics ----------
+
+/// Point the metrics dashboard at `endpoint`. Resolves the runtime / prometheus
+/// URL / GPU source from `config.saved_endpoints`; unknown endpoints fall back
+/// to a generic OpenAI backend (no GPU/server metrics, client-measured only).
+#[tauri::command]
+pub fn set_metrics_target(
+    state: State<'_, AppState>,
+    metrics: State<'_, crate::metrics::MetricsHandle>,
+    endpoint: String,
+) {
+    let mut target = {
+        let cfg = state.config.lock().unwrap();
+        cfg.saved_endpoints
+            .iter()
+            .find(|e| e.url == endpoint)
+            .map(|e| crate::metrics::MetricsTarget {
+                endpoint: e.url.clone(),
+                runtime: e.runtime,
+                prometheus_url: e.prometheus_url.clone(),
+                gpu: e.gpu,
+                agent_url: e.agent_url.clone(),
+            })
+            .unwrap_or_else(|| crate::metrics::MetricsTarget {
+                endpoint: endpoint.clone(),
+                runtime: crate::config::Runtime::Openai,
+                prometheus_url: None,
+                gpu: crate::config::GpuKind::None,
+                agent_url: None,
+            })
+    };
+
+    // Convenience default: a local endpoint on macOS with no explicit GPU source
+    // shows this Mac's unified-memory GPU via macmon, no config needed.
+    #[cfg(target_os = "macos")]
+    if target.gpu == crate::config::GpuKind::None && is_local_host(&target.endpoint) {
+        target.gpu = crate::config::GpuKind::Macmon;
+    }
+
+    *metrics.0.lock().unwrap() = Some(target);
+}
+
+#[cfg(target_os = "macos")]
+fn is_local_host(url: &str) -> bool {
+    reqwest::Url::parse(url)
+        .ok()
+        .and_then(|u| u.host_str().map(|h| h.to_ascii_lowercase()))
+        .is_some_and(|h| h == "localhost" || h == "127.0.0.1" || h == "0.0.0.0")
+}
+
 // ---------- streaming chat ----------
 
 #[tauri::command]

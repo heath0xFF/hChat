@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
 import { api } from "./lib/tauri";
 import type {
   ChatEvent,
@@ -6,6 +7,7 @@ import type {
   ConversationDto,
   GenParams,
   MessageDto,
+  MetricsSnapshot,
   PendingApproval,
   PresetDto,
   SettingsDto,
@@ -90,6 +92,7 @@ export function App() {
   );
   const [siblingMap, setSiblingMap] = useState<Record<number, SiblingInfo>>({});
   const [presets, setPresets] = useState<PresetDto[]>([]);
+  const [snapshot, setSnapshot] = useState<MetricsSnapshot | null>(null);
 
   const reasoningBuf = useRef("");
   const contentBuf = useRef("");
@@ -124,6 +127,37 @@ export function App() {
       if (m.length) setSettings((prev) => (prev ? { ...prev, model: m[0] } : prev));
     })();
   }, [refreshConversations, loadModels]);
+
+  // Subscribe to the backend metrics poller. Each snapshot updates the GPU/
+  // server view and feeds the live charts (so they move during idle polling,
+  // not only when we send a request).
+  useEffect(() => {
+    const un = listen<MetricsSnapshot>("metrics", (e) => {
+      const snap = e.payload;
+      setSnapshot(snap);
+      const decode = snap.server?.decode_tok_s ?? null;
+      const ttft = snap.server?.ttft_ms ?? null;
+      if (decode != null || ttft != null) {
+        setMetrics((m) => ({
+          ...m,
+          throughputHistory:
+            decode != null
+              ? [...m.throughputHistory, decode].slice(-120)
+              : m.throughputHistory,
+          ttftHistory:
+            ttft != null ? [...m.ttftHistory, ttft].slice(-120) : m.ttftHistory,
+        }));
+      }
+    });
+    return () => {
+      un.then((f) => f());
+    };
+  }, []);
+
+  // Point the metrics poller at the active conversation's endpoint.
+  useEffect(() => {
+    if (settings?.endpoint) void api.setMetricsTarget(settings.endpoint);
+  }, [settings?.endpoint]);
 
   const newChat = () => {
     if (!config) return;
@@ -518,6 +552,7 @@ export function App() {
             model={settings.model}
             streaming={streaming}
             metrics={metrics}
+            snapshot={snapshot}
           />
         ) : (
           <ChatView

@@ -1,4 +1,4 @@
-import type { SettingsDto } from "../types";
+import type { MetricsSnapshot, SettingsDto } from "../types";
 import { Sparkline } from "./Sparkline";
 
 export interface LiveMetrics {
@@ -23,19 +23,32 @@ interface Props {
   model: string | null;
   streaming: boolean;
   metrics: LiveMetrics;
+  snapshot: MetricsSnapshot | null;
 }
 
-function fmt(n: number | null, digits = 1): string {
-  if (n === null || !isFinite(n)) return "—";
+function fmt(n: number | null | undefined, digits = 1): string {
+  if (n === null || n === undefined || !isFinite(n)) return "—";
   return n.toFixed(digits);
 }
 
-export function StatusView({ settings, model, streaming, metrics }: Props) {
+export function StatusView({ settings, model, streaming, metrics, snapshot }: Props) {
   const m = metrics;
+  const server = snapshot?.server ?? null;
+  const gpu = snapshot?.gpu ?? null;
+
+  // Prefer server-scraped values (whole-server view); fall back to the last
+  // request's client-measured numbers.
+  const decode = server?.decode_tok_s ?? m.decode;
+  const ttft = server?.ttft_ms ?? m.ttft;
+  const prefill = server?.prefill_tok_s ?? m.prefill;
+  const running = server?.requests_running ?? m.activeRequests;
+  const waiting = server?.requests_waiting ?? 0;
+
   return (
     <div className="status">
       <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "8px 0 6px" }}>
         <span className="badge dot">{streaming ? "ACTIVE" : "IDLE"}</span>
+        {snapshot?.runtime && <span className="badge">{snapshot.runtime}</span>}
         <span className="badge">{settings.endpoint}</span>
       </div>
       <h1>{model ?? "No model selected"}</h1>
@@ -44,7 +57,7 @@ export function StatusView({ settings, model, streaming, metrics }: Props) {
         <div className="tile">
           <div className="label">Decode</div>
           <div className="value">
-            {fmt(m.decode)}
+            {fmt(decode)}
             <span className="unit">tok/s</span>
           </div>
           <div className="sub">peak {fmt(m.peakDecode)}</div>
@@ -52,7 +65,7 @@ export function StatusView({ settings, model, streaming, metrics }: Props) {
         <div className="tile">
           <div className="label">TTFT</div>
           <div className="value">
-            {m.ttft === null ? "—" : Math.round(m.ttft)}
+            {ttft === null ? "—" : Math.round(ttft)}
             <span className="unit">ms</span>
           </div>
           <div className="sub">peak {m.peakTtft ? Math.round(m.peakTtft) : "—"} ms</div>
@@ -60,7 +73,7 @@ export function StatusView({ settings, model, streaming, metrics }: Props) {
         <div className="tile">
           <div className="label">Prefill</div>
           <div className="value">
-            {fmt(m.prefill)}
+            {fmt(prefill)}
             <span className="unit">t/s</span>
           </div>
           <div className="sub">peak {fmt(m.peakPrefill)}</div>
@@ -68,22 +81,28 @@ export function StatusView({ settings, model, streaming, metrics }: Props) {
         <div className="tile">
           <div className="label">Req</div>
           <div className="value" style={{ fontSize: 24 }}>
-            {m.activeRequests}/1
+            {running}/{running + waiting}
           </div>
         </div>
         <div className="tile">
           <div className="label">VRAM</div>
           <div className="value" style={{ fontSize: 20 }}>
-            —
+            {gpu?.vram_used_gb != null
+              ? `${gpu.vram_used_gb.toFixed(1)}/${(gpu.vram_total_gb ?? 0).toFixed(0)}G`
+              : "—"}
           </div>
-          <div className="sub">no gpu source</div>
+          <div className="sub">{gpu?.source ? gpu.source : "no gpu source"}</div>
         </div>
         <div className="tile">
           <div className="label">Power</div>
           <div className="value" style={{ fontSize: 20 }}>
-            —
+            {gpu?.power_w != null
+              ? `${gpu.power_w.toFixed(0)}${gpu.power_limit_w ? "/" + gpu.power_limit_w.toFixed(0) : ""}W`
+              : "—"}
           </div>
-          <div className="sub">no gpu source</div>
+          <div className="sub">
+            {gpu?.temp_c != null ? `${gpu.temp_c.toFixed(0)}° temp` : "—"}
+          </div>
         </div>
       </div>
 
@@ -104,6 +123,12 @@ export function StatusView({ settings, model, streaming, metrics }: Props) {
           <span className="k">Duration</span>
           {(m.durationMs / 1000).toFixed(2)}s
         </span>
+        {server?.kv_cache_pct != null && (
+          <span>
+            <span className="k">KV cache</span>
+            {server.kv_cache_pct.toFixed(0)}%
+          </span>
+        )}
         {m.cost !== null && (
           <span>
             <span className="k">Cost</span>${m.cost.toFixed(4)}
@@ -130,19 +155,34 @@ export function StatusView({ settings, model, streaming, metrics }: Props) {
 
       <div className="gpu-list">
         <div className="chart-head" style={{ marginBottom: 10 }}>
-          <span>GPUs</span>
+          <span>GPUs {gpu?.devices?.length ? gpu.devices.length : ""}</span>
+          {gpu?.source && <span>{gpu.source}</span>}
         </div>
-        <div className="dashboard-empty">
-          GPU metrics (VRAM, power, temp, util) arrive in Phase B — via macmon
-          locally and the hchat-agent on the Spark.
-        </div>
-      </div>
-
-      <div className="logs">
-        <div className="chart-head" style={{ marginBottom: 10 }}>
-          <span>Controller logs</span>
-        </div>
-        <div className="dashboard-empty">Server log tail wires up in Phase B.</div>
+        {gpu?.devices && gpu.devices.length > 0 ? (
+          gpu.devices.map((d, i) => (
+            <div className="gpu-row" key={i}>
+              <span>G{i}</span>
+              <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {d.name}
+              </span>
+              <span>
+                {d.mem_used_gb.toFixed(1)}/{d.mem_total_gb.toFixed(0)}G
+              </span>
+              <span>{d.util_pct.toFixed(0)}%</span>
+              <span>{d.temp_c.toFixed(0)}°</span>
+              <span>
+                {d.power_w.toFixed(0)}
+                {d.power_limit_w ? "/" + d.power_limit_w.toFixed(0) : ""}W
+              </span>
+            </div>
+          ))
+        ) : (
+          <div className="dashboard-empty">
+            No GPU source for this backend. Configure <code>gpu = "macmon"</code>{" "}
+            (local Mac) or <code>gpu = "agent"</code> + <code>agent_url</code> (the
+            Spark) on the endpoint in <code>config.toml</code>.
+          </div>
+        )}
       </div>
     </div>
   );
