@@ -107,6 +107,44 @@ npm run tauri dev    # run the app (hot reload)
 npm run tauri build  # produce a release bundle (.app / .dmg / .deb)
 ```
 
+`npm run tauri dev` runs the app in development with hot reload — use this day to
+day. `npm run tauri build` compiles an optimized frontend (`vite build`) and a
+release Rust binary, then packages a **native installer for your platform** — a
+`.app` + `.dmg` on macOS, a `.deb` / `.AppImage` / `.rpm` on Linux — under
+`src-tauri/target/release/bundle/`. The standalone binary is at
+`src-tauri/target/release/hchat` if you just want to copy that somewhere on your
+`PATH`.
+
+## Migrating from a previous (Homebrew) install
+
+hChat reads and writes the same files as the older version, so your
+conversations, settings, and custom tools carry over **automatically** — nothing
+to export or import:
+
+- **Conversations** (SQLite): `~/Library/Application Support/hchat/hchat.db`
+  (macOS) · `~/.local/share/hchat/hchat.db` (Linux)
+- **Config**: `~/.config/hchat/config.toml`
+- **Custom tools**: the hChat config dir — `~/Library/Application Support/hchat/tools/`
+  (macOS) · `~/.config/hchat/tools/` (Linux)
+
+To switch over:
+
+```bash
+# 1. (optional) back up your database
+cp ~/Library/Application\ Support/hchat/hchat.db ~/hchat-backup.db
+
+# 2. remove the old Homebrew install
+brew uninstall --cask hchat   # if you installed the .app cask
+brew uninstall hchat          # if you installed the CLI binary
+
+# 3. build and run the new version (see "Build & run" above)
+```
+
+On first launch hChat reads your existing `config.toml` — new fields (hotkeys,
+per-endpoint metrics) just take their defaults — and runs SQLite schema
+migrations in place, so older history upgrades without data loss. A corrupt
+config is backed up rather than overwritten.
+
 ## Backends
 
 hChat is a client — point it at a running OpenAI-compatible server. Add endpoints
