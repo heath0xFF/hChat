@@ -1,0 +1,3 @@
+npm run tauri build does what exactly? i'm reading through the readme now -- also i want migration instructions to go from the previous version of hchat (brew installed) to this version. 
+
+the other thing i'd like is for skills & slash commands to work with the ~/.agents convention (and tools if it makes sense)
