@@ -470,8 +470,9 @@ export function SettingsModal({ config, onClose, onSave }: Props) {
                 </button>
               </div>
               <div className="hk-hint">
-                Save to apply changes (servers reconnect automatically). HTTP
-                transport is coming soon — use <code>stdio</code> for now.
+                Save to apply changes (servers reconnect automatically).{" "}
+                <code>stdio</code> spawns a command; <code>http</code> connects to
+                a streamable-HTTP URL.
               </div>
               {servers.map((srv, i) => {
                 const st = mcpStatus.find((s) => s.name === srv.name);

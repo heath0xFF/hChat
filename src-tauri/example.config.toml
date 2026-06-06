@@ -158,7 +158,8 @@ url = "http://localhost:1234/v1"
 # --- MCP servers (optional) ---
 # Connect to Model Context Protocol servers; their tools are exposed to the
 # model alongside hChat's own. Manage these in Settings → MCP, or here.
-# transport = "stdio" spawns `command` with `args`/`env`; "http" is coming soon.
+# transport = "stdio" spawns `command` with `args`/`env`; "http" connects to a
+# streamable-HTTP `url` (with optional `headers`).
 # auto_approve = true runs that server's tools without the approval card.
 #
 # [[mcp_servers]]
@@ -175,3 +176,10 @@ url = "http://localhost:1234/v1"
 # command = "npx"
 # args = ["-y", "@modelcontextprotocol/server-github"]
 # env = { GITHUB_PERSONAL_ACCESS_TOKEN = "ghp_..." }
+#
+# Remote streamable-HTTP MCP server:
+# [[mcp_servers]]
+# name = "remote"
+# transport = "http"
+# url = "https://example.com/mcp"
+# headers = { Authorization = "Bearer ..." }

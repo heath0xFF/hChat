@@ -8,6 +8,8 @@ use rmcp::ServiceExt;
 use rmcp::model::CallToolRequestParams;
 use rmcp::service::{RoleClient, RunningService};
 use rmcp::transport::TokioChildProcess;
+use rmcp::transport::StreamableHttpClientTransport;
+use rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -153,7 +155,27 @@ impl McpManager {
                     TokioChildProcess::new(command).map_err(|e| format!("spawn: {e}"))?;
                 ().serve(transport).await.map_err(|e| format!("connect: {e}"))
             }
-            "http" => Err("http transport is not enabled yet — use transport = \"stdio\"".to_string()),
+            "http" => {
+                let url = s.url.clone().ok_or("http server missing `url`")?;
+                let mut headers = reqwest::header::HeaderMap::new();
+                for (k, v) in &s.headers {
+                    if let (Ok(name), Ok(val)) = (
+                        reqwest::header::HeaderName::from_bytes(k.as_bytes()),
+                        reqwest::header::HeaderValue::from_str(v),
+                    ) {
+                        headers.insert(name, val);
+                    }
+                }
+                let client = reqwest::Client::builder()
+                    .default_headers(headers)
+                    .build()
+                    .map_err(|e| format!("http client: {e}"))?;
+                let transport = StreamableHttpClientTransport::with_client(
+                    client,
+                    StreamableHttpClientTransportConfig::with_uri(url),
+                );
+                ().serve(transport).await.map_err(|e| format!("connect: {e}"))
+            }
             other => Err(format!("unknown transport: {other}")),
         }
     }
@@ -296,5 +318,33 @@ mod tests {
         eprintln!("echo -> is_err={is_err} text={text}");
         assert!(!is_err, "echo errored: {text}");
         assert!(text.contains("hi from hChat"));
+    }
+
+    // Needs a running streamable-HTTP MCP server, e.g.:
+    //   npx -y @modelcontextprotocol/server-everything streamableHttp   (port 3001)
+    // Run with: cargo test --lib mcp::tests::connects_http -- --ignored --nocapture
+    #[tokio::test]
+    #[ignore = "needs an http MCP server on :3001"]
+    async fn connects_http_lists() {
+        let mgr = McpManager::new();
+        let server = McpServer {
+            name: "http_everything".into(),
+            transport: "http".into(),
+            command: None,
+            args: vec![],
+            env: HashMap::new(),
+            url: Some("http://localhost:3001/mcp".into()),
+            headers: HashMap::new(),
+            enabled: true,
+            auto_approve: true,
+        };
+        mgr.connect_all(vec![server]).await;
+        let status = mgr.status().await;
+        eprintln!(
+            "http status: connected={} tools={} err={:?}",
+            status[0].connected, status[0].tool_count, status[0].error
+        );
+        assert!(status[0].connected, "http connect failed: {:?}", status[0].error);
+        assert!(!mgr.tool_specs().await.is_empty());
     }
 }
