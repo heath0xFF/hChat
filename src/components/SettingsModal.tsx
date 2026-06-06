@@ -89,7 +89,8 @@ export function SettingsModal({ config, onClose, onSave }: Props) {
           ))}
         </div>
 
-        <div className="settings-body">
+        <div className="settings-main">
+          <div className="settings-content">
           {section === "general" && (
             <>
               <div className="field">
@@ -427,13 +428,16 @@ export function SettingsModal({ config, onClose, onSave }: Props) {
             </div>
           )}
 
-          <div className="modal-actions">
-            <button className="tbtn" onClick={onClose}>
-              Cancel
-            </button>
-            <button className="tbtn accent" onClick={() => onSave(c)}>
-              Save
-            </button>
+          </div>
+          <div className="settings-footer">
+            <div className="modal-actions">
+              <button className="tbtn" onClick={onClose}>
+                Cancel
+              </button>
+              <button className="tbtn accent" onClick={() => onSave(c)}>
+                Save
+              </button>
+            </div>
           </div>
         </div>
       </div>
