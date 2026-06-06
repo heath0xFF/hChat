@@ -1,0 +1,35 @@
+ok another problem: new chats only get created when the ai responds. new chats should get created when the user presses enter on a new chat. default chat "name" should just be "untitled chat" until the ai responds and then the regular chat title naming can be run
+
+---
+
+let's push all that to github
+
+---
+
+[Image #1] look at this screenshot -- this is vllm-studio from earlier. i want to copy some of these features. primarily being able to open status a right sidebar. and a usage page. you can read the code in ../vllm-studio to see what all they've got going on, but ideally i'd have similar features, maybe not browser and terminal but status and usage
+
+---
+
+is there a data rentention policy in place?
+
+---
+
+yeah add your recommendation
+
+---
+
+ok readme updates are in order
+
+---
+
+yeah commit the whole batch.
+
+---
+
+ok so now what lol looking at vllm-studio and hchat, what are the main things missing that hchat would benefit from?
+
+---
+
+tier 2 fork doesn't make sense, that's too much right now. 
+
+go ahead and work through the tier-1 trio
