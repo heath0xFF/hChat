@@ -33,3 +33,7 @@ ok so now what lol looking at vllm-studio and hchat, what are the main things mi
 tier 2 fork doesn't make sense, that's too much right now. 
 
 go ahead and work through the tier-1 trio
+
+---
+
+update the readme and commit. one commit i think
