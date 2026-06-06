@@ -1,5 +1,7 @@
 :root {
   --bg: #0c0c0e;
+  --bg-deep: #0a0a0c;
+  --inset: #101012;
   --panel: #131315;
   --panel-2: #17171a;
   --panel-3: #1d1d21;
@@ -26,6 +28,8 @@
 /* Light theme — applied when config.dark_mode is false (`.light` on <html>). */
 :root.light {
   --bg: #f6f6f7;
+  --bg-deep: #ececed;
+  --inset: #eef0f2;
   --panel: #ffffff;
   --panel-2: #f1f1f3;
   --panel-3: #e7e7eb;
@@ -91,7 +95,7 @@ button {
 
 /* ---------- Left rail ---------- */
 .rail {
-  background: #0a0a0c;
+  background: var(--bg-deep);
   border-right: 1px solid var(--border-soft);
   display: flex;
   flex-direction: column;
@@ -483,7 +487,7 @@ select.model-select {
   border-left: 2px solid var(--faint);
   margin: 8px 0;
   border-radius: 0 6px 6px 0;
-  background: #101012;
+  background: var(--inset);
 }
 .think summary {
   cursor: pointer;
@@ -1015,13 +1019,21 @@ select.model-select {
 }
 .gpu-row {
   display: grid;
-  grid-template-columns: 40px 1fr 90px 60px 50px 90px;
-  gap: 12px;
+  grid-template-columns: 48px 1fr 110px 64px 56px 110px;
+  gap: 14px;
   align-items: center;
   font-family: var(--mono);
-  font-size: 12px;
-  color: var(--muted);
-  padding: 5px 0;
+  font-size: 13.5px;
+  color: var(--text);
+  padding: 7px 0;
+  border-bottom: 1px solid var(--border-soft);
+}
+.gpu-row.gpu-head {
+  font-size: 10.5px;
+  letter-spacing: 0.1em;
+  color: var(--dim);
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 8px;
 }
 .logs {
   margin-top: 22px;
@@ -1053,7 +1065,7 @@ select.model-select {
 }
 .artifact-panel {
   border-left: 1px solid var(--border-soft);
-  background: #0a0a0c;
+  background: var(--bg-deep);
   display: flex;
   flex-direction: column;
   overflow: hidden;
@@ -1173,7 +1185,7 @@ select.model-select {
 }
 .settings-nav {
   flex: 0 0 176px;
-  background: #0c0c0e;
+  background: var(--bg-deep);
   border-right: 1px solid var(--border-soft);
   padding: 22px 14px;
 }

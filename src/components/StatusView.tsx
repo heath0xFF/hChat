@@ -179,7 +179,16 @@ export function StatusView({ settings, model, streaming, metrics, snapshot }: Pr
           {gpu?.source && <span>{gpu.source}</span>}
         </div>
         {gpu?.devices && gpu.devices.length > 0 ? (
-          gpu.devices.map((d, i) => (
+          <>
+            <div className="gpu-row gpu-head">
+              <span>GPU</span>
+              <span>NAME</span>
+              <span>MEMORY</span>
+              <span>UTIL</span>
+              <span>TEMP</span>
+              <span>POWER</span>
+            </div>
+            {gpu.devices.map((d, i) => (
             <div className="gpu-row" key={i}>
               <span>G{i}</span>
               <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
@@ -195,7 +204,8 @@ export function StatusView({ settings, model, streaming, metrics, snapshot }: Pr
                 {d.power_limit_w ? "/" + d.power_limit_w.toFixed(0) : ""}W
               </span>
             </div>
-          ))
+            ))}
+          </>
         ) : (
           <div className="dashboard-empty">
             No GPU source for this backend. Configure <code>gpu = "macmon"</code>{" "}

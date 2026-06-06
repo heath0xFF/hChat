@@ -4,14 +4,21 @@ import { highlight } from "../lib/highlight";
 interface Props {
   code: string;
   lang: string;
+  streaming?: boolean;
   onOpenArtifact?: (code: string, lang: string) => void;
 }
 
-export function CodeBlock({ code, lang, onOpenArtifact }: Props) {
+export function CodeBlock({ code, lang, streaming, onOpenArtifact }: Props) {
   const [html, setHtml] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
 
+  // Skip syntax highlighting while streaming — re-highlighting on every token
+  // flickers. Render plain text live, then highlight once the stream settles.
   useEffect(() => {
+    if (streaming) {
+      setHtml(null);
+      return;
+    }
     let alive = true;
     highlight(code, lang).then((h) => {
       if (alive) setHtml(h);
@@ -19,7 +26,7 @@ export function CodeBlock({ code, lang, onOpenArtifact }: Props) {
     return () => {
       alive = false;
     };
-  }, [code, lang]);
+  }, [code, lang, streaming]);
 
   const copy = async () => {
     await navigator.clipboard.writeText(code);

@@ -4,10 +4,11 @@ import { CodeBlock } from "./CodeBlock";
 
 interface Props {
   text: string;
+  streaming?: boolean;
   onOpenArtifact?: (code: string, lang: string) => void;
 }
 
-export function Markdown({ text, onOpenArtifact }: Props) {
+export function Markdown({ text, streaming, onOpenArtifact }: Props) {
   return (
     <div className="md">
       <ReactMarkdown
@@ -25,6 +26,7 @@ export function Markdown({ text, onOpenArtifact }: Props) {
                 <CodeBlock
                   code={raw.replace(/\n$/, "")}
                   lang={match?.[1] || "text"}
+                  streaming={streaming}
                   onOpenArtifact={onOpenArtifact}
                 />
               );

@@ -206,7 +206,11 @@ export function MessageItem({
         )}
         {body.length > 0 && (
           <div className={msg.streaming ? "cursor" : ""}>
-            <Markdown text={body} onOpenArtifact={onOpenArtifact} />
+            <Markdown
+              text={body}
+              streaming={msg.streaming}
+              onOpenArtifact={onOpenArtifact}
+            />
           </div>
         )}
         {msg.toolCalls && msg.toolCalls.length > 0 && (

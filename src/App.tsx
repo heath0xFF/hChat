@@ -254,6 +254,11 @@ export function App() {
     setArtifacts(collectArtifacts(messages));
   }, [messages]);
 
+  // Close the artifact panel when leaving a chat (switch conversation or view).
+  useEffect(() => {
+    setArtifactOpen(false);
+  }, [activeConvId, view]);
+
   // Debounced live token count of the composer.
   useEffect(() => {
     const t = setTimeout(() => {
