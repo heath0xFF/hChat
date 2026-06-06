@@ -1,0 +1,41 @@
+{
+  "cli_version": "0.7.3",
+  "checkpoint_id": "26fd6a850de6",
+  "strategy": "manual-commit",
+  "branch": "main",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "AGENTS.md",
+    "CLAUDE.md",
+    "agent/Cargo.toml",
+    "agent/src/main.rs",
+    "docs/MCP_PLAN.md",
+    "index.html",
+    "package.json",
+    "src-tauri/Cargo.toml",
+    "src-tauri/capabilities/default.json",
+    "src-tauri/example.config.toml",
+    "src-tauri/src/core/agents.rs",
+    "src-tauri/src/core/config.rs",
+    "src-tauri/src/main.rs",
+    "src-tauri/src/mcp/mod.rs",
+    "src-tauri/src/metrics/gpu.rs",
+    "src-tauri/src/metrics/mod.rs",
+    "src-tauri/tauri.conf.json"
+  ],
+  "sessions": [
+    {
+      "metadata": "/26/fd6a850de6/0/metadata.json",
+      "transcript": "/26/fd6a850de6/0/full.jsonl",
+      "content_hash": "/26/fd6a850de6/0/content_hash.txt",
+      "prompt": "/26/fd6a850de6/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 83231,
+    "cache_creation_tokens": 4809495,
+    "cache_read_tokens": 498172737,
+    "output_tokens": 921625,
+    "api_call_count": 1052
+  }
+}
