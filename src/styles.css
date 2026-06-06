@@ -1017,6 +1017,17 @@ select.model-select {
 .artifact-md {
   padding: 20px 22px;
 }
+.artifact-mermaid {
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: #fff;
+  min-height: 100%;
+}
+.artifact-mermaid svg {
+  max-width: 100%;
+  height: auto;
+}
 
 /* ---------- modal ---------- */
 .modal-backdrop {

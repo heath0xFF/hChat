@@ -1,7 +1,7 @@
 import { parseThink } from "./segments";
 import type { ChatMessage } from "../components/MessageItem";
 
-export type ArtifactKind = "html" | "svg" | "markdown" | "code";
+export type ArtifactKind = "html" | "svg" | "markdown" | "mermaid" | "code";
 
 export interface Artifact {
   id: string;
@@ -20,6 +20,7 @@ function classify(lang: string, code: string): ArtifactKind {
     return "html";
   }
   if (l === "svg" || head.startsWith("<svg")) return "svg";
+  if (l === "mermaid") return "mermaid";
   if (l === "markdown" || l === "md") return "markdown";
   return "code";
 }
@@ -30,6 +31,8 @@ function title(kind: ArtifactKind, lang: string): string {
       return "HTML";
     case "svg":
       return "SVG";
+    case "mermaid":
+      return "Diagram";
     case "markdown":
       return "Markdown";
     default:
@@ -77,7 +80,12 @@ export function collectArtifacts(messages: ChatMessage[]): Artifact[] {
 }
 
 export function isPreviewable(a: Artifact): boolean {
-  return a.kind === "html" || a.kind === "svg" || a.kind === "markdown";
+  return (
+    a.kind === "html" ||
+    a.kind === "svg" ||
+    a.kind === "markdown" ||
+    a.kind === "mermaid"
+  );
 }
 
 /** Build a one-off artifact from a code block opened directly from chat. */

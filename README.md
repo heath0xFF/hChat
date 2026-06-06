@@ -51,6 +51,9 @@ VRAM, power, and GPU stats for each.
   delete
 - **SQLite history** (WAL) with on-launch schema migrations — upgrades don't wipe
   data
+- **Keyboard-first** — slash commands (`/model`, `/temp`, `/system`, `/clear`,
+  `/copy`, `/help`), find-in-conversation (Cmd+F), per-conversation drafts, a live
+  token counter, and light/dark theme + font/UI-scale settings
 - **Live metrics dashboard** — per-backend decode/TTFT/prefill, requests, VRAM,
   power, temp, KV-cache, and per-GPU rows, with throughput & TTFT charts.
   Apple-Silicon GPU stats come from `macmon` (no sudo); remote NVIDIA boxes use
@@ -290,11 +293,14 @@ Restart to load new/edited tools.
 |---|---|
 | Enter | Send message |
 | Shift+Enter | New line |
+| Cmd/Ctrl+F | Find in conversation |
 | Cmd/Ctrl+Enter | Save & resend (while editing a message) |
+
+**Slash commands** (type in the composer): `/model <name>`, `/temp <0..2>`,
+`/system <text>`, `/clear`, `/copy`, `/help` (with aliases `/m /t /sys /new /?`).
 
 ## Not yet re-ported from the egui app
 
-Slash commands, find-in-conversation, draft persistence, the live token counter,
-configurable fonts / UI-scale / theme toggle, and the "approve all in this
-conversation" tool allowlist. Several of these have storage/parser primitives
-still in the tree and will be re-wired as the rewrite continues.
+A few smaller items remain: the "approve all in this conversation" tool allowlist
+(approvals are currently per-call), a one-click markdown-export button (the
+backend command exists), and per-message hover timestamps.

@@ -1,5 +1,5 @@
 import type { MetricsSnapshot, SettingsDto } from "../types";
-import { Sparkline } from "./Sparkline";
+import { Chart } from "./Chart";
 
 export interface LiveMetrics {
   decode: number | null;
@@ -142,14 +142,14 @@ export function StatusView({ settings, model, streaming, metrics, snapshot }: Pr
             <span>Throughput (tok/s)</span>
             <span>recent</span>
           </div>
-          <Sparkline data={m.throughputHistory} />
+          <Chart data={m.throughputHistory} />
         </div>
         <div className="chart-card">
           <div className="chart-head">
             <span>TTFT (ms)</span>
             <span>recent</span>
           </div>
-          <Sparkline data={m.ttftHistory} color="#e2a03f" />
+          <Chart data={m.ttftHistory} color="#e2a03f" />
         </div>
       </div>
 

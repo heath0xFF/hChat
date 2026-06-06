@@ -3,6 +3,7 @@ import type { Artifact } from "../lib/artifacts";
 import { isPreviewable } from "../lib/artifacts";
 import { CodeBlock } from "./CodeBlock";
 import { Markdown } from "./Markdown";
+import { MermaidView } from "./MermaidView";
 
 interface Props {
   artifact: Artifact;
@@ -77,6 +78,8 @@ export function ArtifactPanel({ artifact, artifacts, onSelect, onClose }: Props)
             className="artifact-svg"
             dangerouslySetInnerHTML={{ __html: artifact.code }}
           />
+        ) : artifact.kind === "mermaid" ? (
+          <MermaidView code={artifact.code} />
         ) : (
           <div className="artifact-md">
             <Markdown text={artifact.code} />

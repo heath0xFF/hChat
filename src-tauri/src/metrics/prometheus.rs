@@ -105,11 +105,23 @@ pub fn derive(runtime: Runtime, prev: Option<&Sample>, cur: &Sample) -> ServerSt
     // For llama-swap, prefer the unlabeled global series (it also emits
     // per-model lines; summing both would double-count).
     let gb = |k: &str| cur.bare.get(k).or_else(|| cur.all.get(k)).copied();
+    // Try several metric-name variants and take the first present. llama-swap's
+    // exact metric names have shifted across versions; this tolerates the
+    // rolling-window suffix (last_5/last_1/last_15) and minor naming drift.
+    let gb_any = |keys: &[&str]| keys.iter().find_map(|k| gb(k));
     match runtime {
         Runtime::LlamaSwap => ServerStats {
             // llama-swap exposes rolling tok/s gauges (1/5/15-request windows).
-            decode_tok_s: gb("llama_swap_generate_tokens_per_second_last_5"),
-            prefill_tok_s: gb("llama_swap_prompt_tokens_per_second_last_5"),
+            decode_tok_s: gb_any(&[
+                "llama_swap_generate_tokens_per_second_last_5",
+                "llama_swap_generate_tokens_per_second_last_1",
+                "llama_swap_generate_tokens_per_second_last_15",
+            ]),
+            prefill_tok_s: gb_any(&[
+                "llama_swap_prompt_tokens_per_second_last_5",
+                "llama_swap_prompt_tokens_per_second_last_1",
+                "llama_swap_prompt_tokens_per_second_last_15",
+            ]),
             ttft_ms: None,
             requests_running: None, // no concurrency gauge exposed
             requests_waiting: None,
