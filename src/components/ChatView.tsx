@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
   Config,
   PendingApproval,
@@ -18,8 +18,12 @@ interface Props {
   streaming: boolean;
   pendingApproval: PendingApproval | null;
   siblingMap: Record<number, SiblingInfo>;
+  input: string;
+  onInputChange: (v: string | ((prev: string) => string)) => void;
+  tokenCount: number;
   onResolveTool: (approved: boolean) => void;
   onSend: (text: string, images: string[]) => void;
+  onSlash: (input: string) => boolean;
   onStop: () => void;
   onRegenerate: () => void;
   onEditMessage: (messageId: number, newText: string) => void;
@@ -67,13 +71,56 @@ function readText(file: File): Promise<string> {
 }
 
 export function ChatView(props: Props) {
-  const [input, setInput] = useState("");
+  const { input, onInputChange } = props;
   const [attachments, setAttachments] = useState<string[]>([]);
   const [selectedPreset, setSelectedPreset] = useState("");
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState("");
+  const [matchPos, setMatchPos] = useState(0);
   const scrollRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const findRef = useRef<HTMLInputElement>(null);
   const atBottom = useRef(true);
+
+  const matches = useMemo(() => {
+    const q = findQuery.trim().toLowerCase();
+    if (!q) return [];
+    const out: number[] = [];
+    props.messages.forEach((m, i) => {
+      if (m.text.toLowerCase().includes(q)) out.push(i);
+    });
+    return out;
+  }, [findQuery, props.messages]);
+  const matchSet = useMemo(() => new Set(matches), [matches]);
+
+  // Cmd/Ctrl+F toggles find; Esc closes it.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "f") {
+        e.preventDefault();
+        setFindOpen((v) => !v);
+        setTimeout(() => findRef.current?.focus(), 0);
+      } else if (e.key === "Escape" && findOpen) {
+        setFindOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [findOpen]);
+
+  // Scroll the active match into view.
+  useEffect(() => {
+    if (!findOpen || matches.length === 0) return;
+    const idx = matches[Math.min(matchPos, matches.length - 1)];
+    const el = scrollRef.current?.querySelector(`[data-find-idx="${idx}"]`);
+    el?.scrollIntoView({ block: "center", behavior: "smooth" });
+  }, [matchPos, matches, findOpen]);
+
+  const stepMatch = (dir: 1 | -1) =>
+    setMatchPos((p) =>
+      matches.length ? (p + dir + matches.length) % matches.length : 0,
+    );
 
   const ingestFiles = async (files: FileList | File[]) => {
     for (const file of Array.from(files)) {
@@ -83,7 +130,7 @@ export function ChatView(props: Props) {
       } else if (TEXT_RE.test(file.name) || file.type.startsWith("text/")) {
         const text = await readText(file);
         const fence = "```";
-        setInput(
+        onInputChange(
           (v) => `${v}${v ? "\n\n" : ""}${fence} ${file.name}\n${text}\n${fence}\n`,
         );
       }
@@ -109,15 +156,25 @@ export function ChatView(props: Props) {
     ta.style.height = Math.min(ta.scrollHeight, 220) + "px";
   };
 
-  const send = () => {
-    const t = input.trim();
-    if ((!t && attachments.length === 0) || props.streaming) return;
-    props.onSend(t, attachments);
-    setInput("");
-    setAttachments([]);
+  const resetHeight = () =>
     requestAnimationFrame(() => {
       if (taRef.current) taRef.current.style.height = "auto";
     });
+
+  const send = () => {
+    if (props.streaming) return;
+    // Intercept slash commands before sending.
+    if (input.trim().startsWith("/") && props.onSlash(input)) {
+      onInputChange("");
+      resetHeight();
+      return;
+    }
+    const t = input.trim();
+    if (!t && attachments.length === 0) return;
+    props.onSend(t, attachments);
+    onInputChange("");
+    setAttachments([]);
+    resetHeight();
   };
 
   const endpoints = props.config.saved_endpoints.map((e) => e.url);
@@ -209,6 +266,34 @@ export function ChatView(props: Props) {
         </button>
       </div>
 
+      {findOpen && (
+        <div className="find-bar">
+          <input
+            ref={findRef}
+            placeholder="Find in conversation…"
+            value={findQuery}
+            onChange={(e) => {
+              setFindQuery(e.target.value);
+              setMatchPos(0);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") stepMatch(e.shiftKey ? -1 : 1);
+              if (e.key === "Escape") setFindOpen(false);
+            }}
+          />
+          <span className="find-count">
+            {matches.length ? `${matchPos + 1}/${matches.length}` : "0/0"}
+          </span>
+          <button onClick={() => stepMatch(-1)} disabled={!matches.length}>
+            ↑
+          </button>
+          <button onClick={() => stepMatch(1)} disabled={!matches.length}>
+            ↓
+          </button>
+          <button onClick={() => setFindOpen(false)}>✕</button>
+        </div>
+      )}
+
       <div className="chat-scroll" ref={scrollRef} onScroll={onScroll}>
         <div className="chat-inner">
           {props.messages.length === 0 ? (
@@ -225,24 +310,33 @@ export function ChatView(props: Props) {
                 i === props.messages.length - 1 &&
                 !m.streaming &&
                 !props.streaming;
+              const cls =
+                findOpen && matches.length
+                  ? matches[matchPos] === i
+                    ? "find-current"
+                    : matchSet.has(i)
+                      ? "find-match"
+                      : ""
+                  : "";
               return (
-                <MessageItem
-                  key={m.id ?? `live-${i}`}
-                  msg={m}
-                  onOpenArtifact={props.onOpenArtifact}
-                  sibling={m.id != null ? props.siblingMap[m.id] : undefined}
-                  onNavigate={
-                    m.id != null
-                      ? (dir) => props.onNavigate(m.id as number, dir)
-                      : undefined
-                  }
-                  onEdit={
-                    m.role === "user" && m.id != null && !props.streaming
-                      ? (text) => props.onEditMessage(m.id as number, text)
-                      : undefined
-                  }
-                  onRegenerate={lastAssistant ? props.onRegenerate : undefined}
-                />
+                <div key={m.id ?? `live-${i}`} data-find-idx={i} className={cls}>
+                  <MessageItem
+                    msg={m}
+                    onOpenArtifact={props.onOpenArtifact}
+                    sibling={m.id != null ? props.siblingMap[m.id] : undefined}
+                    onNavigate={
+                      m.id != null
+                        ? (dir) => props.onNavigate(m.id as number, dir)
+                        : undefined
+                    }
+                    onEdit={
+                      m.role === "user" && m.id != null && !props.streaming
+                        ? (text) => props.onEditMessage(m.id as number, text)
+                        : undefined
+                    }
+                    onRegenerate={lastAssistant ? props.onRegenerate : undefined}
+                  />
+                </div>
               );
             })
           )}
@@ -287,7 +381,7 @@ export function ChatView(props: Props) {
               placeholder="Message…  (Enter to send, Shift+Enter for newline)"
               value={input}
               onChange={(e) => {
-                setInput(e.target.value);
+                onInputChange(e.target.value);
                 autoGrow();
               }}
               onPaste={(e) => {
@@ -323,6 +417,9 @@ export function ChatView(props: Props) {
                 ＋
               </button>
               <span className="hint">{props.settings.model ?? "select a model"}</span>
+              {props.tokenCount > 0 && (
+                <span className="hint token-count">{props.tokenCount} tok</span>
+              )}
               {props.streaming ? (
                 <button className="stop-btn" onClick={props.onStop}>
                   ■ Stop

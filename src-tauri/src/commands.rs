@@ -53,6 +53,7 @@ pub struct MessageDto {
 pub struct ConversationData {
     pub messages: Vec<MessageDto>,
     pub settings: SettingsDto,
+    pub draft: Option<String>,
 }
 
 /// Effective per-conversation settings (conversation overrides folded over the
@@ -287,7 +288,17 @@ pub fn load_conversation(state: State<'_, AppState>, id: i64) -> ConversationDat
         .map(message_to_dto)
         .collect();
     let settings = effective_settings(&cfg, &storage.load_conversation_settings(id));
-    ConversationData { messages, settings }
+    let draft = storage.load_draft(id).filter(|d| !d.is_empty());
+    ConversationData {
+        messages,
+        settings,
+        draft,
+    }
+}
+
+#[tauri::command]
+pub fn save_draft(state: State<'_, AppState>, id: i64, text: String) {
+    state.storage.lock().unwrap().save_draft(id, &text);
 }
 
 #[tauri::command]

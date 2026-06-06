@@ -62,6 +62,7 @@ export interface SettingsDto {
 export interface ConversationData {
   messages: MessageDto[];
   settings: SettingsDto;
+  draft: string | null;
 }
 
 // Shared generation knobs (flattened into the request payloads server-side).

@@ -30,6 +30,8 @@ export const api = {
     invoke<[number, string, string][]>("search_conversations", { query }),
   exportConversation: (id: number) =>
     invoke<string>("export_conversation", { id }),
+  saveDraft: (id: number, text: string) =>
+    invoke<void>("save_draft", { id, text }),
 
   cancelStream: () => invoke<void>("cancel_stream"),
   resolveTool: (callId: string, approved: boolean) =>

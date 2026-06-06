@@ -45,6 +45,7 @@ pub fn run() {
             commands::set_pinned,
             commands::search_conversations,
             commands::export_conversation,
+            commands::save_draft,
             commands::cancel_stream,
             commands::send_message,
             commands::regenerate,

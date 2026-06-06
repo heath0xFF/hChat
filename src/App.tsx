@@ -25,6 +25,9 @@ import {
   makeArtifact,
   type Artifact,
 } from "./lib/artifacts";
+import { parseSlash, SLASH_HELP } from "./lib/slash";
+import { parseThink } from "./lib/segments";
+import { countTokens } from "./lib/tokens";
 
 const EMPTY_METRICS: LiveMetrics = {
   decode: null,
@@ -103,6 +106,8 @@ export function App() {
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const [currentArtifact, setCurrentArtifact] = useState<Artifact | null>(null);
   const [artifactOpen, setArtifactOpen] = useState(false);
+  const [composerInput, setComposerInput] = useState("");
+  const [tokenCount, setTokenCount] = useState(0);
 
   const reasoningBuf = useRef("");
   const contentBuf = useRef("");
@@ -174,6 +179,69 @@ export function App() {
     setArtifacts(collectArtifacts(messages));
   }, [messages]);
 
+  // Debounced live token count of the composer.
+  useEffect(() => {
+    const t = setTimeout(() => {
+      setTokenCount(composerInput.trim() ? countTokens(composerInput) : 0);
+    }, 150);
+    return () => clearTimeout(t);
+  }, [composerInput]);
+
+  // Debounced per-conversation draft persistence.
+  useEffect(() => {
+    if (activeConvId == null) return;
+    const id = activeConvId;
+    const t = setTimeout(() => void api.saveDraft(id, composerInput), 500);
+    return () => clearTimeout(t);
+  }, [composerInput, activeConvId]);
+
+  const handleSlash = (raw: string): boolean => {
+    const r = parseSlash(raw);
+    if (r.kind === "none") return false;
+    if (r.kind === "unknown") {
+      setError(`Unknown command: /${r.verb} — try /help`);
+      return true;
+    }
+    if (r.kind === "badargs") {
+      setError(r.reason);
+      return true;
+    }
+    const c = r.cmd;
+    switch (c.type) {
+      case "model": {
+        const match = models.find((m) =>
+          m.toLowerCase().includes(c.arg.toLowerCase()),
+        );
+        if (match) setSettings((p) => (p ? { ...p, model: match } : p));
+        else setError(`No model matches "${c.arg}"`);
+        break;
+      }
+      case "temp":
+        setSettings((p) =>
+          p ? { ...p, temperature: Math.min(2, Math.max(0, c.value)) } : p,
+        );
+        break;
+      case "system":
+        setSettings((p) => (p ? { ...p, system_prompt: c.text } : p));
+        break;
+      case "clear":
+        newChat();
+        break;
+      case "copy": {
+        const last = [...messages].reverse().find((m) => m.role === "assistant");
+        if (last) {
+          const body = parseThink(last.text).body || last.text;
+          void navigator.clipboard.writeText(body);
+        }
+        break;
+      }
+      case "help":
+        setError(SLASH_HELP);
+        break;
+    }
+    return true;
+  };
+
   const openArtifact = (code: string, lang: string) => {
     const match = artifacts.find((a) => a.code === code) ?? makeArtifact(code, lang);
     setCurrentArtifact(match);
@@ -194,7 +262,9 @@ export function App() {
   const newChat = () => {
     if (!config) return;
     setActiveConvId(null);
+    convIdRef.current = null;
     setMessages([]);
+    setComposerInput("");
     setView("chat");
     const s = defaultSettings(config);
     s.model = models[0] ?? null;
@@ -208,6 +278,7 @@ export function App() {
     setMessages(data.messages.map(toChatMessage));
     void buildSiblingMap(data.messages);
     setSettings(data.settings);
+    setComposerInput(data.draft ?? "");
     setView("chat");
     const m = await loadModels(data.settings.endpoint);
     if (data.settings.model === null && m.length) {
@@ -608,8 +679,12 @@ export function App() {
             streaming={streaming}
             pendingApproval={pendingApproval}
             siblingMap={siblingMap}
+            input={composerInput}
+            onInputChange={setComposerInput}
+            tokenCount={tokenCount}
             onResolveTool={resolveTool}
             onSend={send}
+            onSlash={handleSlash}
             onStop={stop}
             onRegenerate={regenerate}
             onEditMessage={editMessage}
