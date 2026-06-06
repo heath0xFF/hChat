@@ -1,0 +1,1 @@
+ok when the right sidebar is open, either if its the status tab or the artifact tab, Esc should close it
