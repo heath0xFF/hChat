@@ -53,10 +53,28 @@ VRAM, power, and GPU stats for each.
 - `config.toml` stays the source of truth and hand-editable
 - Cross-platform (macOS, Linux)
 
-## Build & run
+## Requirements
 
-The rewrite builds from source. You need the [Rust toolchain](https://rustup.rs)
-and [Node.js](https://nodejs.org) 20+.
+The rewrite builds from source. You need:
+
+- **[Rust toolchain](https://rustup.rs)** (stable) — `rustc` 1.85+
+- **[Node.js](https://nodejs.org) 20+** and npm
+- **Tauri system dependencies** for your platform (the native webview + build
+  tools). Quick version:
+  - **macOS** — Xcode Command Line Tools: `xcode-select --install`
+  - **Debian/Ubuntu** —
+    ```bash
+    sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file \
+      libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+    ```
+  - **Arch** —
+    ```bash
+    sudo pacman -S --needed webkit2gtk-4.1 base-devel curl wget file openssl \
+      appmenu-gtk-module libappindicator-gtk3 librsvg
+    ```
+  - Other distros / full details: [Tauri prerequisites](https://tauri.app/start/prerequisites/)
+
+## Build & run
 
 ```bash
 git clone https://github.com/heath0xFF/hChat
