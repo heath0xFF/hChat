@@ -1,0 +1,1 @@
+ok so one kink in this so far is that on the spark i'm also running llama.cpp right now with llama-swap. will this still all work with that?

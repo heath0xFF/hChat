@@ -1,0 +1,29 @@
+{
+  "cli_version": "0.7.3",
+  "checkpoint_id": "dab51761617b",
+  "strategy": "manual-commit",
+  "branch": "rewrite-tauri",
+  "checkpoints_count": 0,
+  "files_touched": [
+    "README.md",
+    "src-tauri/example.config.toml",
+    "src-tauri/src/core/config.rs",
+    "src-tauri/src/metrics/mod.rs",
+    "src-tauri/src/metrics/prometheus.rs"
+  ],
+  "sessions": [
+    {
+      "metadata": "/da/b51761617b/0/metadata.json",
+      "transcript": "/da/b51761617b/0/full.jsonl",
+      "content_hash": "/da/b51761617b/0/content_hash.txt",
+      "prompt": "/da/b51761617b/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 907,
+    "cache_creation_tokens": 25604,
+    "cache_read_tokens": 9660571,
+    "output_tokens": 18985,
+    "api_call_count": 20
+  }
+}
