@@ -697,7 +697,7 @@ pub async fn send_message(
         let storage = state.storage.lock().unwrap();
         let conversation_id = match params.conversation_id {
             Some(id) => id,
-            None => storage.create_conversation("New chat")?,
+            None => storage.create_conversation("untitled chat")?,
         };
         let mut messages = storage.load_messages(conversation_id);
         let mut parts = vec![ContentPart::Text {

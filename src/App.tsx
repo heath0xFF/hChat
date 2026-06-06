@@ -471,7 +471,13 @@ export function App() {
         switch (ev.type) {
           case "started":
             convIdRef.current = ev.conversation_id;
-            if (activeConvId === null) setActiveConvId(ev.conversation_id);
+            if (activeConvId === null) {
+              // First message in a new chat: the backend just created the
+              // conversation row, so surface it in the sidebar immediately
+              // (titled "untitled chat" until auto-titling runs post-response).
+              setActiveConvId(ev.conversation_id);
+              refreshConversations();
+            }
             break;
           case "turn_start":
             // Close out the previous assistant turn, reset buffers, and open a
