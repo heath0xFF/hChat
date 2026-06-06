@@ -1,0 +1,12 @@
+nice no, that's fine. yeah it's my space, i'll do what i want in there. 
+
+what else is left?
+
+---
+
+i don't think we need to worry about redistributing this as a dmg or .app or whatever. just having the instructions in here for people (if anyone actually uses this lol) will be fine. 
+
+as for #1, we're good. i've been verifying as you've been building
+#2 -- i already have llama.cpp with llama-swap working on MY spark, so that's fine, honestly. full vllm-studio parity is something that's not a massive priority, really where i was coming from with comparing to vllm studio was the ability to view into resource utilization and model performance metrics. 
+#3 -- MCP support would be awesome to add into this, but maybe a branch? what's the correct approach? 
+#5 -- implement these. i'd also like to implement projects and pinned chats & projects.
