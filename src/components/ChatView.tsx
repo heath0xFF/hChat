@@ -8,7 +8,7 @@ import type {
 } from "../types";
 import type { ChatMessage } from "./MessageItem";
 import { MessageItem } from "./MessageItem";
-import { ApprovalCard } from "./ApprovalCard";
+import { ApprovalCard, type ApprovalDecision } from "./ApprovalCard";
 
 interface Props {
   config: Config;
@@ -21,7 +21,7 @@ interface Props {
   input: string;
   onInputChange: (v: string | ((prev: string) => string)) => void;
   tokenCount: number;
-  onResolveTool: (approved: boolean) => void;
+  onResolveTool: (decision: ApprovalDecision) => void;
   onSend: (text: string, images: string[]) => void;
   onSlash: (input: string) => boolean;
   onStop: () => void;
@@ -31,6 +31,8 @@ interface Props {
   onChangeModel: (model: string) => void;
   onChangeEndpoint: (endpoint: string) => void;
   onOpenParams: () => void;
+  onExport: () => void;
+  canExport: boolean;
   onOpenArtifact?: (code: string, lang: string) => void;
   artifactCount: number;
   artifactOpen: boolean;
@@ -259,6 +261,11 @@ export function ChatView(props: Props) {
             onClick={props.onToggleArtifacts}
           >
             ◧ {props.artifactCount}
+          </button>
+        )}
+        {props.canExport && (
+          <button className="tbtn" title="Export to Markdown" onClick={props.onExport}>
+            export
           </button>
         )}
         <button className="tbtn" onClick={props.onOpenParams}>

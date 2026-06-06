@@ -15,9 +15,24 @@ export interface ChatMessage {
   text: string;
   images?: string[];
   streaming?: boolean;
+  createdAt?: number;
   toolCalls?: ToolCallChip[];
   toolName?: string;
   isError?: boolean;
+}
+
+function fmtTime(ms?: number): string {
+  if (!ms) return "";
+  try {
+    return new Date(ms).toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  } catch {
+    return "";
+  }
 }
 
 interface Props {
@@ -104,7 +119,10 @@ export function MessageItem({
       <div className="msg user">
         <div className="avatar">U</div>
         <div className="body">
-          <div className="who">you</div>
+          <div className="who">
+            you
+            {msg.createdAt && <span className="msg-time">{fmtTime(msg.createdAt)}</span>}
+          </div>
           {msg.images && msg.images.length > 0 && (
             <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
               {msg.images.map((src, i) => (
@@ -174,7 +192,10 @@ export function MessageItem({
     <div className="msg assistant">
       <div className="avatar">{AVATAR.assistant}</div>
       <div className="body">
-        <div className="who">assistant</div>
+        <div className="who">
+          assistant
+          {msg.createdAt && <span className="msg-time">{fmtTime(msg.createdAt)}</span>}
+        </div>
         {reasoning !== null && reasoning.trim().length > 0 && (
           <details className="think" open={reasoningOpen}>
             <summary>reasoning{reasoningOpen ? " …" : ""}</summary>

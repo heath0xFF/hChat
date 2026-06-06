@@ -18,6 +18,7 @@ import { ChatView } from "./components/ChatView";
 import { StatusView, type LiveMetrics } from "./components/StatusView";
 import { SettingsModal } from "./components/SettingsModal";
 import { ArtifactPanel } from "./components/ArtifactPanel";
+import type { ApprovalDecision } from "./components/ApprovalCard";
 import type { ChatMessage } from "./components/MessageItem";
 import {
   collectArtifacts,
@@ -93,6 +94,7 @@ function toChatMessage(m: MessageDto): ChatMessage {
     role: m.role,
     text: m.text,
     images: m.images,
+    createdAt: m.created_at ?? undefined,
     toolCalls: m.tool_calls
       ? m.tool_calls.map((tc) => ({
           id: tc.id,
@@ -127,6 +129,7 @@ export function App() {
   const [artifactOpen, setArtifactOpen] = useState(false);
   const [composerInput, setComposerInput] = useState("");
   const [tokenCount, setTokenCount] = useState(0);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const reasoningBuf = useRef("");
   const contentBuf = useRef("");
@@ -260,7 +263,7 @@ export function App() {
         break;
       }
       case "help":
-        setError(SLASH_HELP);
+        setNotice(SLASH_HELP);
         break;
     }
     return true;
@@ -599,10 +602,20 @@ export function App() {
     await api.cancelStream();
   };
 
-  const resolveTool = async (approved: boolean) => {
+  const resolveTool = async (decision: ApprovalDecision) => {
     if (!pendingApproval) return;
-    await api.resolveTool(pendingApproval.id, approved);
+    await api.resolveTool(pendingApproval.id, decision);
     setPendingApproval(null);
+  };
+
+  const exportConversation = async () => {
+    if (activeConvId == null) return;
+    try {
+      const path = await api.exportConversationFile(activeConvId);
+      setNotice(`Exported to ${path}`);
+    } catch (e) {
+      setError(String(e));
+    }
   };
 
   const saveConfig = async (next: Config) => {
@@ -720,6 +733,8 @@ export function App() {
             onChangeModel={changeModel}
             onChangeEndpoint={changeEndpoint}
             onOpenParams={() => setShowSettings(true)}
+            onExport={exportConversation}
+            canExport={activeConvId != null}
             onOpenArtifact={openArtifact}
             artifactCount={artifacts.length}
             artifactOpen={artifactOpen}
@@ -753,6 +768,12 @@ export function App() {
       {error && (
         <div className="toast" onClick={() => setError(null)}>
           {error}
+        </div>
+      )}
+
+      {notice && (
+        <div className="toast notice" onClick={() => setNotice(null)}>
+          {notice}
         </div>
       )}
     </div>

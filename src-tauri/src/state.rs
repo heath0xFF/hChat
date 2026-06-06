@@ -1,10 +1,18 @@
 use crate::config::Config;
 use crate::storage::Storage;
 use crate::tools::{self, ToolDef};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
+
+/// A parked tool-approval request: the oneshot to fulfill plus the context
+/// needed to honor an "approve all in this conversation" decision.
+pub struct PendingApproval {
+    pub tx: oneshot::Sender<bool>,
+    pub conversation_id: i64,
+    pub tool: String,
+}
 
 /// All long-lived app state, managed by Tauri and shared across commands.
 ///
@@ -22,7 +30,10 @@ pub struct AppState {
     /// Tool calls awaiting user approval, keyed by tool_call id. The streaming
     /// task parks a oneshot here and emits a `tool_approval` event; the
     /// `resolve_tool` command fulfills it with the user's decision.
-    pub pending_approvals: Mutex<HashMap<String, oneshot::Sender<bool>>>,
+    pub pending_approvals: Mutex<HashMap<String, PendingApproval>>,
+    /// `(conversation_id, tool_name)` pairs the user chose to auto-approve for
+    /// the rest of the session via "approve all in this conversation".
+    pub auto_approved: Mutex<HashSet<(i64, String)>>,
 }
 
 impl AppState {
@@ -38,6 +49,7 @@ impl AppState {
             tools: Mutex::new(loaded),
             cancel: Mutex::new(None),
             pending_approvals: Mutex::new(HashMap::new()),
+            auto_approved: Mutex::new(HashSet::new()),
         }
     }
 

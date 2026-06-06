@@ -43,6 +43,7 @@ export interface MessageDto {
   images: string[];
   tool_calls: ToolCallDto[] | null;
   tool_call_id: string | null;
+  created_at: number | null;
 }
 
 export interface SettingsDto {

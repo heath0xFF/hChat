@@ -47,6 +47,8 @@ pub struct MessageDto {
     pub images: Vec<String>,
     pub tool_calls: Option<Vec<ToolCallDto>>,
     pub tool_call_id: Option<String>,
+    /// Unix epoch ms (session-local for live messages, persisted for loaded ones).
+    pub created_at: Option<i64>,
 }
 
 #[derive(Serialize)]
@@ -209,6 +211,7 @@ fn message_to_dto(m: &Message) -> MessageDto {
         images,
         tool_calls,
         tool_call_id: m.tool_call_id.clone(),
+        created_at: m.created_at,
     }
 }
 
@@ -333,6 +336,38 @@ pub fn export_conversation(state: State<'_, AppState>, id: i64) -> String {
     state.storage.lock().unwrap().export_markdown(id)
 }
 
+/// Write a conversation's markdown to the user's download dir; returns the path.
+#[tauri::command]
+pub fn export_conversation_file(state: State<'_, AppState>, id: i64) -> Result<String, String> {
+    let (markdown, title) = {
+        let s = state.storage.lock().unwrap();
+        let md = s.export_markdown(id);
+        let title = s
+            .list_conversations()
+            .into_iter()
+            .find(|c| c.id == id)
+            .map(|c| c.title)
+            .unwrap_or_default();
+        (md, title)
+    };
+    let safe: String = title
+        .chars()
+        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' { c } else { '-' })
+        .collect();
+    let safe = safe.trim_matches('-');
+    let name = if safe.is_empty() {
+        format!("hchat-{id}")
+    } else {
+        safe.to_string()
+    };
+    let dir = dirs::download_dir()
+        .or_else(dirs::home_dir)
+        .ok_or("Could not find a download directory")?;
+    let path = dir.join(format!("{name}.md"));
+    std::fs::write(&path, markdown).map_err(|e| format!("Write failed: {e}"))?;
+    Ok(path.display().to_string())
+}
+
 // ---------- presets ----------
 
 #[derive(Serialize)]
@@ -453,10 +488,26 @@ pub fn cancel_stream(state: State<'_, AppState>) {
     }
 }
 
+/// Resolve a parked tool approval. `decision` is "approve", "approve_all"
+/// (also adds the tool to this conversation's auto-approve allowlist), or
+/// anything else (deny).
 #[tauri::command]
-pub fn resolve_tool(state: State<'_, AppState>, call_id: String, approved: bool) {
-    if let Some(tx) = state.pending_approvals.lock().unwrap().remove(&call_id) {
-        let _ = tx.send(approved);
+pub fn resolve_tool(state: State<'_, AppState>, call_id: String, decision: String) {
+    let pending = state.pending_approvals.lock().unwrap().remove(&call_id);
+    if let Some(p) = pending {
+        let approved = match decision.as_str() {
+            "approve" => true,
+            "approve_all" => {
+                state
+                    .auto_approved
+                    .lock()
+                    .unwrap()
+                    .insert((p.conversation_id, p.tool.clone()));
+                true
+            }
+            _ => false,
+        };
+        let _ = p.tx.send(approved);
     }
 }
 
@@ -725,9 +776,16 @@ async fn run_turn(
             let (result, is_error) = match def {
                 None => (format!("unknown tool: {}", call.function.name), true),
                 Some(def) => {
-                    let approved = match def.safety {
-                        Safety::Auto => true,
-                        Safety::Confirm => request_approval(state, on_event, call, &cancel).await,
+                    let pre_approved = def.safety == Safety::Auto
+                        || state
+                            .auto_approved
+                            .lock()
+                            .unwrap()
+                            .contains(&(conversation_id, def.name.clone()));
+                    let approved = if pre_approved {
+                        true
+                    } else {
+                        request_approval(state, on_event, call, conversation_id, &cancel).await
                     };
                     if !approved {
                         ("Tool call denied by user.".to_string(), true)
@@ -935,14 +993,18 @@ async fn request_approval(
     state: &State<'_, AppState>,
     on_event: &Channel<ChatEvent>,
     call: &ToolCall,
+    conversation_id: i64,
     cancel: &CancellationToken,
 ) -> bool {
     let (tx, rx) = oneshot::channel::<bool>();
-    state
-        .pending_approvals
-        .lock()
-        .unwrap()
-        .insert(call.id.clone(), tx);
+    state.pending_approvals.lock().unwrap().insert(
+        call.id.clone(),
+        crate::state::PendingApproval {
+            tx,
+            conversation_id,
+            tool: call.function.name.clone(),
+        },
+    );
     on_event
         .send(ChatEvent::ToolApproval {
             id: call.id.clone(),
