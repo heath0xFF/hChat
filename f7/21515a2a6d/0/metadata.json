@@ -1,0 +1,47 @@
+{
+  "cli_version": "0.7.3",
+  "checkpoint_id": "f721515a2a6d",
+  "session_id": "3f04eee0-fabc-48a5-874d-70461e02999f",
+  "strategy": "manual-commit",
+  "created_at": "2026-06-06T18:10:40.587405Z",
+  "branch": "rewrite-tauri",
+  "checkpoints_count": 0,
+  "files_touched": [
+    "src-tauri/src/core/storage.rs",
+    "src-tauri/src/commands.rs",
+    "src-tauri/src/lib.rs",
+    "src/types.ts",
+    "src/lib/tauri.ts",
+    "src/components/Sidebar.tsx",
+    "src/App.tsx",
+    "src/styles.css",
+    "README.md"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-opus-4-8[1m]",
+  "turn_id": "6d53dceee300",
+  "checkpoint_transcript_start": 2643,
+  "transcript_lines_at_start": 2643,
+  "token_usage": {
+    "input_tokens": 1035,
+    "cache_creation_tokens": 31367,
+    "cache_read_tokens": 30062373,
+    "output_tokens": 21983,
+    "api_call_count": 40
+  },
+  "session_metrics": {
+    "turn_count": 16
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-06-06T18:10:40.523385Z",
+    "agent_lines": 494,
+    "agent_removed": 78,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 494,
+    "total_lines_changed": 572,
+    "agent_percentage": 100,
+    "metric_version": 2
+  }
+}
