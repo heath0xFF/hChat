@@ -1,0 +1,32 @@
+{
+  "cli_version": "0.7.3",
+  "checkpoint_id": "37edf3666263",
+  "strategy": "manual-commit",
+  "branch": "rewrite-tauri",
+  "checkpoints_count": 0,
+  "files_touched": [
+    "README.md",
+    "src-tauri/src/metrics/prometheus.rs",
+    "src/components/ArtifactPanel.tsx",
+    "src/components/Chart.tsx",
+    "src/components/MermaidView.tsx",
+    "src/components/StatusView.tsx",
+    "src/lib/artifacts.ts",
+    "src/styles.css"
+  ],
+  "sessions": [
+    {
+      "metadata": "/37/edf3666263/0/metadata.json",
+      "transcript": "/37/edf3666263/0/full.jsonl",
+      "content_hash": "/37/edf3666263/0/content_hash.txt",
+      "prompt": ""
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 534,
+    "cache_creation_tokens": 13752,
+    "cache_read_tokens": 10823215,
+    "output_tokens": 11778,
+    "api_call_count": 19
+  }
+}
