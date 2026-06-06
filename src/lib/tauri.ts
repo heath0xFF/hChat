@@ -8,6 +8,7 @@ import type {
   GenParams,
   MessageDto,
   PresetDto,
+  ProjectDto,
   SendParams,
   SiblingInfo,
 } from "../types";
@@ -27,6 +28,16 @@ export const api = {
     invoke<void>("rename_conversation", { id, title }),
   setPinned: (id: number, pinned: boolean) =>
     invoke<void>("set_pinned", { id, pinned }),
+
+  listProjects: () => invoke<ProjectDto[]>("list_projects"),
+  createProject: (name: string) => invoke<number>("create_project", { name }),
+  renameProject: (id: number, name: string) =>
+    invoke<void>("rename_project", { id, name }),
+  deleteProject: (id: number) => invoke<void>("delete_project", { id }),
+  setProjectPinned: (id: number, pinned: boolean) =>
+    invoke<void>("set_project_pinned", { id, pinned }),
+  setConversationProject: (conversationId: number, projectId: number | null) =>
+    invoke<void>("set_conversation_project", { conversationId, projectId }),
   searchConversations: (query: string) =>
     invoke<[number, string, string][]>("search_conversations", { query }),
   exportConversation: (id: number) =>

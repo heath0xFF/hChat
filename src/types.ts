@@ -45,6 +45,13 @@ export interface ConversationDto {
   id: number;
   title: string;
   pinned: boolean;
+  project_id: number | null;
+}
+
+export interface ProjectDto {
+  id: number;
+  name: string;
+  pinned: boolean;
 }
 
 export interface ToolCallDto {

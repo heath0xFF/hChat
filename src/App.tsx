@@ -11,6 +11,7 @@ import type {
   MetricsSnapshot,
   PendingApproval,
   PresetDto,
+  ProjectDto,
   SettingsDto,
   SiblingInfo,
 } from "./types";
@@ -121,6 +122,7 @@ function toChatMessage(m: MessageDto): ChatMessage {
 export function App() {
   const [config, setConfig] = useState<Config | null>(null);
   const [conversations, setConversations] = useState<ConversationDto[]>([]);
+  const [projects, setProjects] = useState<ProjectDto[]>([]);
   const [view, setView] = useState<View>("chat");
   const [activeConvId, setActiveConvId] = useState<number | null>(null);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -155,6 +157,10 @@ export function App() {
     setConversations(await api.listConversations());
   }, []);
 
+  const refreshProjects = useCallback(async () => {
+    setProjects(await api.listProjects());
+  }, []);
+
   const loadModels = useCallback(async (endpoint: string) => {
     try {
       const m = await api.fetchModels(endpoint);
@@ -175,11 +181,12 @@ export function App() {
       const s = defaultSettings(cfg);
       setSettings(s);
       await refreshConversations();
+      await refreshProjects();
       setPresets(await api.listPresets());
       const m = await loadModels(s.endpoint);
       if (m.length) setSettings((prev) => (prev ? { ...prev, model: m[0] } : prev));
     })();
-  }, [refreshConversations, loadModels]);
+  }, [refreshConversations, refreshProjects, loadModels]);
 
   // Subscribe to the backend metrics poller. Each snapshot updates the GPU/
   // server view and feeds the live charts (so they move during idle polling,
@@ -766,6 +773,7 @@ export function App() {
         view={view}
         setView={setView}
         conversations={shownConversations}
+        projects={projects}
         activeConvId={activeConvId}
         onSelectConv={selectConv}
         onNewChat={newChat}
@@ -781,6 +789,30 @@ export function App() {
         onDelete={async (id) => {
           await api.deleteConversation(id);
           if (activeConvId === id) newChat();
+          refreshConversations();
+        }}
+        onCreateProject={async () => {
+          const name = window.prompt("Project name");
+          if (name?.trim()) {
+            await api.createProject(name.trim());
+            refreshProjects();
+          }
+        }}
+        onRenameProject={async (id, name) => {
+          await api.renameProject(id, name);
+          refreshProjects();
+        }}
+        onDeleteProject={async (id) => {
+          await api.deleteProject(id);
+          await refreshProjects();
+          refreshConversations();
+        }}
+        onPinProject={async (id, pinned) => {
+          await api.setProjectPinned(id, pinned);
+          refreshProjects();
+        }}
+        onMoveConv={async (convId, projectId) => {
+          await api.setConversationProject(convId, projectId);
           refreshConversations();
         }}
         onOpenSettings={() => setShowSettings(true)}

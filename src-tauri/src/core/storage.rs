@@ -9,6 +9,14 @@ pub struct Conversation {
     pub id: i64,
     pub title: String,
     pub pinned: bool,
+    pub project_id: Option<i64>,
+}
+
+/// A project groups conversations in the sidebar.
+pub struct Project {
+    pub id: i64,
+    pub name: String,
+    pub pinned: bool,
 }
 
 /// Per-conversation settings snapshot. All fields are `Option` because a
@@ -103,6 +111,12 @@ impl Storage {
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
                     name TEXT NOT NULL,
                     created_at TEXT NOT NULL DEFAULT (datetime('now'))
+                );
+                CREATE TABLE IF NOT EXISTS projects (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    name TEXT NOT NULL,
+                    pinned INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL DEFAULT (datetime('now'))
                 );",
             )
             .expect("Failed to create baseline tables");
@@ -148,6 +162,8 @@ impl Storage {
             ("auto_titled", "INTEGER NOT NULL DEFAULT 0"),
             // Phase 5a: per-conversation working directory for tool calls.
             ("working_dir", "TEXT"),
+            // Project grouping (nullable — loose chats have NULL).
+            ("project_id", "INTEGER"),
         ];
         const MSG_COLS: &[(&str, &str)] = &[
             // SQLite allows ALTER TABLE ADD COLUMN with a self-referencing
@@ -239,7 +255,8 @@ impl Storage {
 
     pub fn list_conversations(&self) -> Vec<Conversation> {
         let mut stmt = match self.conn.prepare(
-            "SELECT id, title, pinned FROM conversations ORDER BY pinned DESC, updated_at DESC",
+            "SELECT id, title, pinned, project_id FROM conversations \
+             ORDER BY pinned DESC, updated_at DESC",
         ) {
             Ok(s) => s,
             Err(_) => return Vec::new(),
@@ -250,11 +267,79 @@ impl Storage {
                 id: row.get(0)?,
                 title: row.get(1)?,
                 pinned: row.get::<_, i64>(2)? != 0,
+                project_id: row.get(3).ok(),
             })
         }) {
             Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
             Err(_) => Vec::new(),
         }
+    }
+
+    // ---------- projects ----------
+
+    pub fn create_project(&self, name: &str) -> Result<i64, String> {
+        self.conn
+            .execute("INSERT INTO projects (name) VALUES (?1)", params![name])
+            .map_err(|e| format!("Failed to create project: {e}"))?;
+        Ok(self.conn.last_insert_rowid())
+    }
+
+    pub fn list_projects(&self) -> Vec<Project> {
+        let mut stmt = match self.conn.prepare(
+            "SELECT id, name, pinned FROM projects ORDER BY pinned DESC, name COLLATE NOCASE",
+        ) {
+            Ok(s) => s,
+            Err(_) => return Vec::new(),
+        };
+        match stmt.query_map([], |row| {
+            Ok(Project {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                pinned: row.get::<_, i64>(2)? != 0,
+            })
+        }) {
+            Ok(rows) => rows.filter_map(|r| r.ok()).collect(),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    pub fn rename_project(&self, id: i64, name: &str) {
+        self.conn
+            .execute("UPDATE projects SET name = ?1 WHERE id = ?2", params![name, id])
+            .ok();
+    }
+
+    pub fn set_project_pinned(&self, id: i64, pinned: bool) {
+        self.conn
+            .execute(
+                "UPDATE projects SET pinned = ?1 WHERE id = ?2",
+                params![pinned as i64, id],
+            )
+            .ok();
+    }
+
+    /// Delete a project; its conversations are detached (project_id → NULL),
+    /// not deleted.
+    pub fn delete_project(&self, id: i64) {
+        if let Ok(tx) = self.conn.unchecked_transaction() {
+            tx.execute(
+                "UPDATE conversations SET project_id = NULL WHERE project_id = ?1",
+                params![id],
+            )
+            .ok();
+            tx.execute("DELETE FROM projects WHERE id = ?1", params![id]).ok();
+            tx.commit().ok();
+        }
+    }
+
+    /// Assign (or clear, with `None`) a conversation's project.
+    pub fn set_conversation_project(&self, conversation_id: i64, project_id: Option<i64>) {
+        self.conn
+            .execute(
+                "UPDATE conversations SET project_id = ?1 WHERE id = ?2",
+                params![project_id, conversation_id],
+            )
+            .ok();
     }
 
     pub fn delete_conversation(&self, id: i64) {
@@ -1314,6 +1399,31 @@ mod tests {
         assert_eq!(listed[0].settings.model.as_deref(), Some("haiku"));
         s.delete_preset(pid);
         assert!(s.list_presets().is_empty());
+    }
+
+    #[test]
+    fn projects_crud_and_membership() {
+        let s = mem_storage();
+        assert!(s.list_projects().is_empty());
+
+        let pid = s.create_project("Spark").unwrap();
+        let cid = s.create_conversation("chat 1").unwrap();
+        assert_eq!(s.list_conversations()[0].project_id, None);
+
+        s.set_conversation_project(cid, Some(pid));
+        assert_eq!(s.list_conversations()[0].project_id, Some(pid));
+
+        s.set_project_pinned(pid, true);
+        s.rename_project(pid, "Spark2");
+        let projects = s.list_projects();
+        assert_eq!(projects.len(), 1);
+        assert_eq!(projects[0].name, "Spark2");
+        assert!(projects[0].pinned);
+
+        // Deleting a project keeps its conversations, detaching them.
+        s.delete_project(pid);
+        assert!(s.list_projects().is_empty());
+        assert_eq!(s.list_conversations()[0].project_id, None);
     }
 
     // ----- Phase 4: branching -----

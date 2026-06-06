@@ -27,6 +27,14 @@ pub struct ConversationDto {
     pub id: i64,
     pub title: String,
     pub pinned: bool,
+    pub project_id: Option<i64>,
+}
+
+#[derive(Serialize)]
+pub struct ProjectDto {
+    pub id: i64,
+    pub name: String,
+    pub pinned: bool,
 }
 
 #[derive(Serialize)]
@@ -277,8 +285,60 @@ pub fn list_conversations(state: State<'_, AppState>) -> Vec<ConversationDto> {
             id: c.id,
             title: c.title,
             pinned: c.pinned,
+            project_id: c.project_id,
         })
         .collect()
+}
+
+// ---------- projects ----------
+
+#[tauri::command]
+pub fn list_projects(state: State<'_, AppState>) -> Vec<ProjectDto> {
+    state
+        .storage
+        .lock()
+        .unwrap()
+        .list_projects()
+        .into_iter()
+        .map(|p| ProjectDto {
+            id: p.id,
+            name: p.name,
+            pinned: p.pinned,
+        })
+        .collect()
+}
+
+#[tauri::command]
+pub fn create_project(state: State<'_, AppState>, name: String) -> Result<i64, String> {
+    state.storage.lock().unwrap().create_project(&name)
+}
+
+#[tauri::command]
+pub fn rename_project(state: State<'_, AppState>, id: i64, name: String) {
+    state.storage.lock().unwrap().rename_project(id, &name);
+}
+
+#[tauri::command]
+pub fn delete_project(state: State<'_, AppState>, id: i64) {
+    state.storage.lock().unwrap().delete_project(id);
+}
+
+#[tauri::command]
+pub fn set_project_pinned(state: State<'_, AppState>, id: i64, pinned: bool) {
+    state.storage.lock().unwrap().set_project_pinned(id, pinned);
+}
+
+#[tauri::command]
+pub fn set_conversation_project(
+    state: State<'_, AppState>,
+    conversation_id: i64,
+    project_id: Option<i64>,
+) {
+    state
+        .storage
+        .lock()
+        .unwrap()
+        .set_conversation_project(conversation_id, project_id);
 }
 
 #[tauri::command]

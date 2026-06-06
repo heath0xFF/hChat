@@ -40,7 +40,9 @@ Electron app.
 - **Markdown** rendering with syntax highlighting (shiki) and per-code-block copy
 - **Keyboard-first** — slash commands, find-in-conversation, drafts, a live token
   counter, and fully **rebindable shortcuts**
-- **SQLite history** with auto-titles, search, pin, rename, and markdown export
+- **SQLite history** with auto-titles, search, pin, rename, and markdown export;
+  group chats into **projects** (drag a chat onto a project; pin projects + chats
+  to the top)
 - Light/dark themes, configurable fonts and UI scale; `config.toml` stays the
   hand-editable source of truth
 - Cross-platform (macOS, Linux)

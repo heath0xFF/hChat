@@ -194,6 +194,83 @@ button {
   color: var(--accent);
 }
 
+.rail-inline-input {
+  flex: 1;
+  min-width: 0;
+  background: var(--panel-2);
+  border: 1px solid var(--accent-dim);
+  border-radius: 5px;
+  color: var(--text);
+  padding: 2px 6px;
+  font-size: 13px;
+  outline: none;
+}
+
+/* ---------- projects ---------- */
+.project-group {
+  margin-bottom: 1px;
+}
+.project-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 12px;
+  margin: 1px 8px;
+  border-radius: 7px;
+  color: var(--muted);
+  font-size: 13px;
+  cursor: pointer;
+  user-select: none;
+}
+.project-header:hover {
+  background: var(--panel-2);
+  color: var(--text);
+}
+.project-header.drop {
+  background: rgba(56, 189, 180, 0.14);
+  outline: 1px dashed var(--accent-dim);
+}
+.project-header .proj-caret {
+  width: 12px;
+  font-size: 10px;
+  color: var(--dim);
+}
+.project-header .proj-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.project-header .proj-count {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--dim);
+}
+.project-header .pin {
+  opacity: 0;
+  font-size: 11px;
+  color: var(--dim);
+}
+.project-header:hover .pin,
+.project-header .pin.on {
+  opacity: 1;
+}
+.project-header .pin.on {
+  color: var(--accent);
+}
+.project-chats {
+  margin-left: 12px;
+  border-left: 1px solid var(--border-soft);
+  padding-left: 2px;
+}
+.rail-section.drop-zone.drop {
+  background: rgba(56, 189, 180, 0.1);
+  border-radius: 6px;
+}
+.conv-item[draggable="true"] {
+  cursor: pointer;
+}
+
 .rail-footer {
   border-top: 1px solid var(--border-soft);
   padding: 4px 0;
