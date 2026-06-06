@@ -322,6 +322,67 @@ pub fn export_conversation(state: State<'_, AppState>, id: i64) -> String {
     state.storage.lock().unwrap().export_markdown(id)
 }
 
+// ---------- presets ----------
+
+#[derive(Serialize)]
+pub struct PresetDto {
+    pub id: i64,
+    pub name: String,
+    pub endpoint: Option<String>,
+    pub model: Option<String>,
+    pub system_prompt: Option<String>,
+    pub temperature: Option<f32>,
+    pub max_tokens: Option<u32>,
+    pub use_max_tokens: bool,
+    pub top_p: Option<f32>,
+    pub frequency_penalty: Option<f32>,
+    pub presence_penalty: Option<f32>,
+    pub stop_sequences: Vec<String>,
+}
+
+#[tauri::command]
+pub fn list_presets(state: State<'_, AppState>) -> Vec<PresetDto> {
+    state
+        .storage
+        .lock()
+        .unwrap()
+        .list_presets()
+        .into_iter()
+        .map(|p| {
+            let s = p.settings;
+            PresetDto {
+                id: p.id,
+                name: p.name,
+                endpoint: s.endpoint,
+                model: s.model,
+                system_prompt: s.system_prompt,
+                temperature: s.temperature,
+                max_tokens: s.max_tokens,
+                use_max_tokens: s.use_max_tokens,
+                top_p: s.top_p,
+                frequency_penalty: s.frequency_penalty,
+                presence_penalty: s.presence_penalty,
+                stop_sequences: s.stop_sequences,
+            }
+        })
+        .collect()
+}
+
+#[tauri::command]
+pub fn create_preset(
+    state: State<'_, AppState>,
+    name: String,
+    gp: GenParams,
+) -> Result<i64, String> {
+    let cs = settings_from_gen(&gp, None);
+    state.storage.lock().unwrap().create_preset(&name, &cs)
+}
+
+#[tauri::command]
+pub fn delete_preset(state: State<'_, AppState>, id: i64) {
+    state.storage.lock().unwrap().delete_preset(id);
+}
+
 // ---------- streaming chat ----------
 
 #[tauri::command]

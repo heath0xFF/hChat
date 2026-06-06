@@ -6,6 +6,7 @@ import type {
   ChatEvent,
   GenParams,
   MessageDto,
+  PresetDto,
   SendParams,
   SiblingInfo,
 } from "../types";
@@ -68,4 +69,9 @@ export const api = {
     invoke<SiblingInfo>("message_siblings", { messageId }),
   walkFrom: (startId: number) =>
     invoke<MessageDto[]>("walk_from", { startId }),
+
+  listPresets: () => invoke<PresetDto[]>("list_presets"),
+  createPreset: (name: string, gp: GenParams) =>
+    invoke<number>("create_preset", { name, gp }),
+  deletePreset: (id: number) => invoke<void>("delete_preset", { id }),
 };

@@ -7,6 +7,7 @@ import type {
   GenParams,
   MessageDto,
   PendingApproval,
+  PresetDto,
   SettingsDto,
   SiblingInfo,
 } from "./types";
@@ -88,6 +89,7 @@ export function App() {
     null,
   );
   const [siblingMap, setSiblingMap] = useState<Record<number, SiblingInfo>>({});
+  const [presets, setPresets] = useState<PresetDto[]>([]);
 
   const reasoningBuf = useRef("");
   const contentBuf = useRef("");
@@ -117,6 +119,7 @@ export function App() {
       const s = defaultSettings(cfg);
       setSettings(s);
       await refreshConversations();
+      setPresets(await api.listPresets());
       const m = await loadModels(s.endpoint);
       if (m.length) setSettings((prev) => (prev ? { ...prev, model: m[0] } : prev));
     })();
@@ -436,6 +439,38 @@ export function App() {
     setShowSettings(false);
   };
 
+  const applyPreset = async (p: PresetDto) => {
+    setSettings((prev) =>
+      prev
+        ? {
+            ...prev,
+            endpoint: p.endpoint ?? prev.endpoint,
+            model: p.model ?? prev.model,
+            system_prompt: p.system_prompt ?? prev.system_prompt,
+            temperature: p.temperature ?? prev.temperature,
+            max_tokens: p.max_tokens ?? prev.max_tokens,
+            use_max_tokens: p.use_max_tokens,
+            top_p: p.top_p,
+            frequency_penalty: p.frequency_penalty,
+            presence_penalty: p.presence_penalty,
+            stop_sequences: p.stop_sequences,
+          }
+        : prev,
+    );
+    if (p.endpoint) await loadModels(p.endpoint);
+  };
+
+  const savePreset = async (name: string) => {
+    if (!settings) return;
+    await api.createPreset(name, genParamsFrom(settings));
+    setPresets(await api.listPresets());
+  };
+
+  const deletePreset = async (id: number) => {
+    await api.deletePreset(id);
+    setPresets(await api.listPresets());
+  };
+
   const onSearch = async (q: string) => {
     setSearchQuery(q);
   };
@@ -499,6 +534,10 @@ export function App() {
             onRegenerate={regenerate}
             onEditMessage={editMessage}
             onNavigate={navigateSibling}
+            presets={presets}
+            onApplyPreset={applyPreset}
+            onSavePreset={savePreset}
+            onDeletePreset={deletePreset}
             onChangeModel={changeModel}
             onChangeEndpoint={changeEndpoint}
             onOpenParams={() => setShowSettings(true)}

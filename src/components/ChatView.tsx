@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import type { Config, PendingApproval, SettingsDto, SiblingInfo } from "../types";
+import type {
+  Config,
+  PendingApproval,
+  PresetDto,
+  SettingsDto,
+  SiblingInfo,
+} from "../types";
 import type { ChatMessage } from "./MessageItem";
 import { MessageItem } from "./MessageItem";
 import { ApprovalCard } from "./ApprovalCard";
@@ -22,6 +28,10 @@ interface Props {
   onChangeEndpoint: (endpoint: string) => void;
   onOpenParams: () => void;
   onOpenArtifact?: (code: string, lang: string) => void;
+  presets: PresetDto[];
+  onApplyPreset: (p: PresetDto) => void;
+  onSavePreset: (name: string) => void;
+  onDeletePreset: (id: number) => void;
 }
 
 function runtimeBadge(endpoint: string): string {
@@ -56,6 +66,7 @@ function readText(file: File): Promise<string> {
 export function ChatView(props: Props) {
   const [input, setInput] = useState("");
   const [attachments, setAttachments] = useState<string[]>([]);
+  const [selectedPreset, setSelectedPreset] = useState("");
   const scrollRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -144,6 +155,43 @@ export function ChatView(props: Props) {
           ))}
         </select>
         <div className="spacer" />
+        <select
+          className="model-select"
+          value={selectedPreset}
+          title="Presets"
+          onChange={(e) => {
+            const val = e.target.value;
+            if (val === "__save__") {
+              const name = window.prompt("Preset name");
+              if (name?.trim()) props.onSavePreset(name.trim());
+              setSelectedPreset("");
+            } else if (val) {
+              const p = props.presets.find((x) => String(x.id) === val);
+              if (p) props.onApplyPreset(p);
+              setSelectedPreset(val);
+            }
+          }}
+        >
+          <option value="">Presets…</option>
+          {props.presets.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+          <option value="__save__">＋ Save current…</option>
+        </select>
+        {selectedPreset && selectedPreset !== "__save__" && (
+          <button
+            className="tbtn danger"
+            title="Delete preset"
+            onClick={() => {
+              props.onDeletePreset(Number(selectedPreset));
+              setSelectedPreset("");
+            }}
+          >
+            ✕
+          </button>
+        )}
         <button className="tbtn" onClick={props.onOpenParams}>
           params
         </button>

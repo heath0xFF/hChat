@@ -43,6 +43,9 @@ pub fn run() {
             commands::message_siblings,
             commands::walk_from,
             commands::resolve_tool,
+            commands::list_presets,
+            commands::create_preset,
+            commands::delete_preset,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

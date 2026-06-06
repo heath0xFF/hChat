@@ -90,6 +90,21 @@ export interface SiblingInfo {
   ids: number[];
 }
 
+export interface PresetDto {
+  id: number;
+  name: string;
+  endpoint: string | null;
+  model: string | null;
+  system_prompt: string | null;
+  temperature: number | null;
+  max_tokens: number | null;
+  use_max_tokens: boolean;
+  top_p: number | null;
+  frequency_penalty: number | null;
+  presence_penalty: number | null;
+  stop_sequences: string[];
+}
+
 // Streaming events (serde tag = "type", snake_case)
 export type ChatEvent =
   | { type: "started"; conversation_id: number }
