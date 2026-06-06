@@ -1,0 +1,37 @@
+{
+  "cli_version": "0.7.3",
+  "checkpoint_id": "c1d5c5358a62",
+  "strategy": "manual-commit",
+  "branch": "feat/mcp",
+  "checkpoints_count": 0,
+  "files_touched": [
+    "CLAUDE.md",
+    "README.md",
+    "src-tauri/Cargo.toml",
+    "src-tauri/src/commands.rs",
+    "src-tauri/src/core/config.rs",
+    "src-tauri/src/lib.rs",
+    "src-tauri/src/mcp/mod.rs",
+    "src-tauri/src/state.rs",
+    "src/App.tsx",
+    "src/components/SettingsModal.tsx",
+    "src/lib/tauri.ts",
+    "src/styles.css",
+    "src/types.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/c1/d5c5358a62/0/metadata.json",
+      "transcript": "/c1/d5c5358a62/0/full.jsonl",
+      "content_hash": "/c1/d5c5358a62/0/content_hash.txt",
+      "prompt": "/c1/d5c5358a62/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 2559,
+    "cache_creation_tokens": 914756,
+    "cache_read_tokens": 77416259,
+    "output_tokens": 59523,
+    "api_call_count": 87
+  }
+}
