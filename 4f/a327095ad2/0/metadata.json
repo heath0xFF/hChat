@@ -1,0 +1,66 @@
+{
+  "cli_version": "0.7.3",
+  "checkpoint_id": "4fa327095ad2",
+  "session_id": "3f04eee0-fabc-48a5-874d-70461e02999f",
+  "strategy": "manual-commit",
+  "created_at": "2026-06-06T20:04:40.160842Z",
+  "branch": "main",
+  "checkpoints_count": 0,
+  "files_touched": [
+    "src/components/CodeBlock.tsx",
+    "src/components/Markdown.tsx",
+    "src/components/MessageItem.tsx",
+    "src/styles.css",
+    "src/App.tsx",
+    "src/components/StatusView.tsx"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-opus-4-8[1m]",
+  "turn_id": "7d01c2687ff9",
+  "checkpoint_transcript_start": 2872,
+  "transcript_lines_at_start": 2872,
+  "token_usage": {
+    "input_tokens": 6961,
+    "cache_creation_tokens": 802321,
+    "cache_read_tokens": 25120681,
+    "output_tokens": 20778,
+    "api_call_count": 33
+  },
+  "session_metrics": {
+    "turn_count": 17
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-06-06T20:04:40.091242Z",
+    "agent_lines": 55,
+    "agent_removed": 15,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 55,
+    "total_lines_changed": 70,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 177,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".firecrawl/search-forge-apps.json": 1,
+        ".firecrawl/search-github-chat-apps.json": 1,
+        ".firecrawl/search-hchat-specific.json": 1,
+        ".firecrawl/search-llm-chat-apps.json": 1,
+        ".firecrawl/search-llm-desktop-apps.json": 1,
+        ".firecrawl/search-llm-guis.json": 1,
+        ".firecrawl/search-npm-hchat.json": 1,
+        ".firecrawl/search-npm-spark.json": 1,
+        ".firecrawl/search-spark-apps.json": 1,
+        ".firecrawl/similar-apps-summary.md": 76,
+        ".pi/extensions/entire/index.ts": 92
+      }
+    }
+  ]
+}

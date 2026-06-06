@@ -1,0 +1,9 @@
+ok couple of things i want to work on now before we work on the MCP set of features (it's ok for these to go into this branch) 
+
+1. streamed markdown output into the app flickers, i don't know why. 
+2. the lightmode doesn't work for the sidebars
+3. the artifact window DOES WORK (nice job) but it doesn't go away when i switch chats or go to the status page (it should auto close when i leave the chat). 
+4. the GPU from macmon only shows G0 and the text is VERY small and there are no titles for the columns. 
+5. the status workspace shouldn't be bound to a specific chat -- when i click status, there should be a dropdown for each endpoint. to see status of a different device, i have to select a chat then go back to the status page, that's annoying. 
+6. sidebar width should be adjustable. like i should be able to drag the width with my mouse. 
+7. i'd like to see an icon on the chat component in the left sidebar that shows which backend i used (omlx, llamaswap, etc)
