@@ -1,0 +1,5 @@
+ok nice. and the README has instructions on how to run this new rewrite?
+
+---
+
+those requirements should be in the readme.
