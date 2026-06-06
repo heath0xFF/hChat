@@ -136,21 +136,87 @@ agent_url = "http://spark:9099"
   Local endpoints on macOS default to `macmon` automatically, so VRAM/power/temp
   show up with no config.
 
-### The Spark agent (`hchat-agent`)
+### DGX Spark setup (`hchat-agent`)
 
-`nvidia-smi` can't report VRAM on the GB10/DGX Spark (CPU+GPU share unified
-memory), so a tiny zero-dependency exporter reads `nvidia-smi` *and*
-`/proc/meminfo` and serves them as JSON:
+`nvidia-smi` can't report VRAM on the GB10 / DGX Spark — CPU and GPU share
+unified LPDDR5X, so memory shows as `[Not Supported]`. The bundled
+**`hchat-agent`** works around this by reading `nvidia-smi` (power/temp/util)
+*and* `/proc/meminfo` (unified VRAM) and serving them as JSON. It's a single
+zero-dependency Rust binary (~450 KB).
+
+**1. Make sure vLLM is exposing metrics.** vLLM serves Prometheus metrics at
+`/metrics` on its API port by default — no extra flags needed. Confirm:
 
 ```bash
-# build (on the Spark, or cross-compile for aarch64-unknown-linux-gnu) and run
-cd agent
-cargo build --release
-./target/release/hchat-agent --port 9099     # serves GET /gpu
+curl -s http://localhost:8000/metrics | head    # on the Spark
 ```
 
-Then point an endpoint at it with `gpu = "agent"` and
-`agent_url = "http://<spark>:9099"` as above.
+**2. Build the agent on the Spark.** It needs the Rust toolchain
+([rustup.rs](https://rustup.rs)) and `nvidia-smi` on `PATH` (already present on a
+DGX Spark). Get the source onto the box (`git clone` or `scp -r agent/`), then:
+
+```bash
+# on the Spark
+git clone https://github.com/heath0xFF/hChat && cd hChat
+git checkout rewrite-tauri
+cd agent
+cargo build --release
+sudo install -m755 target/release/hchat-agent /usr/local/bin/hchat-agent
+```
+
+> Prefer not to install Rust on the Spark? Cross-compile from another Linux box
+> with `rustup target add aarch64-unknown-linux-gnu` (or `…-musl` for a fully
+> static binary) and `scp` the result over.
+
+**3. Run it.** For a quick test, foreground:
+
+```bash
+hchat-agent --port 9099            # serves GET /gpu (binds 0.0.0.0 by default)
+curl -s http://localhost:9099/gpu  # sanity check — JSON with VRAM/power/temp
+```
+
+To keep it running across reboots, install a systemd service:
+
+```ini
+# /etc/systemd/system/hchat-agent.service
+[Unit]
+Description=hChat GPU metrics agent
+After=network.target
+
+[Service]
+ExecStart=/usr/local/bin/hchat-agent --port 9099
+Restart=on-failure
+User=YOUR_USER
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now hchat-agent
+```
+
+**4. Reach it from your Mac.**
+
+- **Same network:** use the Spark's hostname/IP — `agent_url = "http://spark:9099"`,
+  `prometheus_url = "http://spark:8000/metrics"`. The agent binds `0.0.0.0`; if
+  the box has a firewall, allow ports `9099` and `8000`.
+- **Not on the same network (or you'd rather not expose ports):** SSH-tunnel and
+  point hChat at `localhost`:
+  ```bash
+  ssh -N -L 9099:localhost:9099 -L 8000:localhost:8000 you@spark
+  ```
+  then use `agent_url = "http://localhost:9099"` and
+  `prometheus_url = "http://localhost:8000/metrics"`.
+
+> The agent serves only GPU stats and has no auth. On an untrusted network, run
+> it with `--bind 127.0.0.1` and reach it through the SSH tunnel above.
+
+**5. Add the endpoint in hChat** (see the vLLM example in the config above):
+`runtime = "vllm"`, `prometheus_url`, `gpu = "agent"`, `agent_url`. Select it in
+the top bar and open **Status** — you'll see decode/TTFT/prefill and requests
+from vLLM, and VRAM/power/temp/util per GPU from the agent.
 
 ## Configuration
 
