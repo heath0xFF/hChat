@@ -10,6 +10,7 @@ pub struct Conversation {
     pub title: String,
     pub pinned: bool,
     pub project_id: Option<i64>,
+    pub endpoint: Option<String>,
 }
 
 /// A project groups conversations in the sidebar.
@@ -255,7 +256,7 @@ impl Storage {
 
     pub fn list_conversations(&self) -> Vec<Conversation> {
         let mut stmt = match self.conn.prepare(
-            "SELECT id, title, pinned, project_id FROM conversations \
+            "SELECT id, title, pinned, project_id, endpoint FROM conversations \
              ORDER BY pinned DESC, updated_at DESC",
         ) {
             Ok(s) => s,
@@ -268,6 +269,7 @@ impl Storage {
                 title: row.get(1)?,
                 pinned: row.get::<_, i64>(2)? != 0,
                 project_id: row.get(3).ok(),
+                endpoint: row.get(4).ok(),
             })
         }) {
             Ok(rows) => rows.filter_map(|r| r.ok()).collect(),

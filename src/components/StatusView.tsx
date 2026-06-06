@@ -1,4 +1,4 @@
-import type { MetricsSnapshot, SettingsDto } from "../types";
+import type { MetricsSnapshot } from "../types";
 import { Chart } from "./Chart";
 
 export interface LiveMetrics {
@@ -21,9 +21,12 @@ export interface LiveMetrics {
 }
 
 interface Props {
-  settings: SettingsDto;
-  model: string | null;
-  streaming: boolean;
+  endpoints: string[];
+  endpoint: string;
+  /** The endpoint the chat is currently using; client-measured per-request
+   *  metrics only apply when the status endpoint matches it. */
+  liveEndpoint: string | null;
+  onChangeEndpoint: (endpoint: string) => void;
   metrics: LiveMetrics;
   snapshot: MetricsSnapshot | null;
 }
@@ -33,27 +36,53 @@ function fmt(n: number | null | undefined, digits = 1): string {
   return n.toFixed(digits);
 }
 
-export function StatusView({ settings, model, streaming, metrics, snapshot }: Props) {
+function hostOf(url: string): string {
+  try {
+    return new URL(url).host || url;
+  } catch {
+    return url;
+  }
+}
+
+export function StatusView({
+  endpoints,
+  endpoint,
+  liveEndpoint,
+  onChangeEndpoint,
+  metrics,
+  snapshot,
+}: Props) {
   const m = metrics;
   const server = snapshot?.server ?? null;
   const gpu = snapshot?.gpu ?? null;
+  // Client-measured per-request numbers are only meaningful for the endpoint the
+  // chat is actively using.
+  const isLive = endpoint === liveEndpoint;
 
-  // Prefer server-scraped values (whole-server view); fall back to the last
-  // request's client-measured numbers.
-  const decode = server?.decode_tok_s ?? m.decode;
-  const ttft = server?.ttft_ms ?? m.ttft;
-  const prefill = server?.prefill_tok_s ?? m.prefill;
-  const running = server?.requests_running ?? m.activeRequests;
+  const decode = server?.decode_tok_s ?? (isLive ? m.decode : null);
+  const ttft = server?.ttft_ms ?? (isLive ? m.ttft : null);
+  const prefill = server?.prefill_tok_s ?? (isLive ? m.prefill : null);
+  const running = server?.requests_running ?? (isLive ? m.activeRequests : 0);
   const waiting = server?.requests_waiting ?? 0;
 
   return (
     <div className="status">
       <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "8px 0 6px" }}>
-        <span className="badge dot">{streaming ? "ACTIVE" : "IDLE"}</span>
-        {snapshot?.runtime && <span className="badge">{snapshot.runtime}</span>}
-        <span className="badge">{settings.endpoint}</span>
+        {snapshot?.runtime && <span className="badge dot">{snapshot.runtime}</span>}
+        <select
+          className="model-select"
+          value={endpoint}
+          onChange={(e) => onChangeEndpoint(e.target.value)}
+        >
+          {!endpoints.includes(endpoint) && <option value={endpoint}>{endpoint}</option>}
+          {endpoints.map((u) => (
+            <option key={u} value={u}>
+              {u}
+            </option>
+          ))}
+        </select>
       </div>
-      <h1>{model ?? "No model selected"}</h1>
+      <h1>{hostOf(endpoint)}</h1>
 
       <div className="tiles">
         <div className="tile">

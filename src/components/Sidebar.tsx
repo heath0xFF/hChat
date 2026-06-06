@@ -28,6 +28,14 @@ const NAV: { key: View; label: string; ico: string }[] = [
   { key: "chat", label: "Chat", ico: "✦" },
 ];
 
+const RT_BADGE: Record<string, string> = {
+  omlx: "ML",
+  llamaswap: "LS",
+  llamacpp: "LC",
+  vllm: "VL",
+  openai: "AI",
+};
+
 export function Sidebar(props: Props) {
   const [renaming, setRenaming] = useState<number | null>(null);
   const [renameBuf, setRenameBuf] = useState("");
@@ -91,6 +99,11 @@ export function Sidebar(props: Props) {
         />
       ) : (
         <>
+          {c.runtime && (
+            <span className={`conv-rt rt-${c.runtime}`} title={c.runtime}>
+              {RT_BADGE[c.runtime] ?? "··"}
+            </span>
+          )}
           <span className="title">{c.title}</span>
           <span
             className={`pin ${c.pinned ? "on" : ""}`}

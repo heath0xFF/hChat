@@ -28,6 +28,9 @@ pub struct ConversationDto {
     pub title: String,
     pub pinned: bool,
     pub project_id: Option<i64>,
+    /// Short runtime code of the conversation's endpoint (omlx/llamaswap/…),
+    /// for the sidebar backend icon.
+    pub runtime: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -273,19 +276,36 @@ pub async fn fetch_models(
 
 // ---------- conversations ----------
 
+fn runtime_code(r: crate::config::Runtime) -> &'static str {
+    use crate::config::Runtime::*;
+    match r {
+        Vllm => "vllm",
+        Omlx => "omlx",
+        LlamaCpp => "llamacpp",
+        LlamaSwap => "llamaswap",
+        Openai => "openai",
+    }
+}
+
 #[tauri::command]
 pub fn list_conversations(state: State<'_, AppState>) -> Vec<ConversationDto> {
-    state
-        .storage
-        .lock()
-        .unwrap()
-        .list_conversations()
+    let convs = state.storage.lock().unwrap().list_conversations();
+    let cfg = state.config.lock().unwrap();
+    convs
         .into_iter()
-        .map(|c| ConversationDto {
-            id: c.id,
-            title: c.title,
-            pinned: c.pinned,
-            project_id: c.project_id,
+        .map(|c| {
+            let runtime = c
+                .endpoint
+                .as_ref()
+                .and_then(|ep| cfg.saved_endpoints.iter().find(|e| &e.url == ep))
+                .map(|e| runtime_code(e.runtime).to_string());
+            ConversationDto {
+                id: c.id,
+                title: c.title,
+                pinned: c.pinned,
+                project_id: c.project_id,
+                runtime,
+            }
         })
         .collect()
 }

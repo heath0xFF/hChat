@@ -46,6 +46,7 @@ export interface ConversationDto {
   title: string;
   pinned: boolean;
   project_id: number | null;
+  runtime: string | null;
 }
 
 export interface ProjectDto {

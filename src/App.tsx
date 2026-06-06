@@ -139,6 +139,11 @@ export function App() {
   const [siblingMap, setSiblingMap] = useState<Record<number, SiblingInfo>>({});
   const [presets, setPresets] = useState<PresetDto[]>([]);
   const [snapshot, setSnapshot] = useState<MetricsSnapshot | null>(null);
+  const [statusEndpoint, setStatusEndpoint] = useState("");
+  const [railWidth, setRailWidth] = useState(() => {
+    const s = localStorage.getItem("railWidth");
+    return s ? Number(s) : 248;
+  });
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const [currentArtifact, setCurrentArtifact] = useState<Artifact | null>(null);
   const [artifactOpen, setArtifactOpen] = useState(false);
@@ -178,6 +183,7 @@ export function App() {
     (async () => {
       const cfg = await api.getConfig();
       setConfig(cfg);
+      setStatusEndpoint(cfg.default_endpoint);
       const s = defaultSettings(cfg);
       setSettings(s);
       await refreshConversations();
@@ -224,10 +230,25 @@ export function App() {
     };
   }, []);
 
-  // Point the metrics poller at the active conversation's endpoint.
+  // Point the metrics poller at the Status-selected endpoint while on the Status
+  // view, otherwise at the active conversation's endpoint.
   useEffect(() => {
-    if (settings?.endpoint) void api.setMetricsTarget(settings.endpoint);
-  }, [settings?.endpoint]);
+    const ep = view === "status" ? statusEndpoint : settings?.endpoint;
+    if (ep) void api.setMetricsTarget(ep);
+  }, [view, statusEndpoint, settings?.endpoint]);
+
+  // Clear the metric histories when the Status endpoint changes so charts
+  // reflect the newly-selected device.
+  useEffect(() => {
+    setSnapshot(null);
+    setMetrics((m) => ({
+      ...m,
+      throughputHistory: [],
+      ttftHistory: [],
+      gpuUtilHistory: [],
+      gpuPowerHistory: [],
+    }));
+  }, [statusEndpoint]);
 
   // Load ~/.agents commands/skills (+ project .agents under the working dir).
   useEffect(() => {
@@ -772,8 +793,34 @@ export function App() {
 
   const showArtifact = artifactOpen && currentArtifact;
 
+  const startResize = (e: React.MouseEvent) => {
+    e.preventDefault();
+    document.body.style.userSelect = "none";
+    const onMove = (ev: MouseEvent) => {
+      const w = Math.min(480, Math.max(180, ev.clientX));
+      setRailWidth(w);
+      localStorage.setItem("railWidth", String(w));
+    };
+    const onUp = () => {
+      document.body.style.userSelect = "";
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  };
+
+  const gridTemplateColumns = showArtifact
+    ? `${railWidth}px minmax(0, 1fr) minmax(380px, 0.9fr)`
+    : `${railWidth}px 1fr`;
+
   return (
-    <div className={`app${showArtifact ? " with-artifact" : ""}`}>
+    <div className="app" style={{ gridTemplateColumns }}>
+      <div
+        className="rail-resize"
+        style={{ left: railWidth - 2 }}
+        onMouseDown={startResize}
+      />
       <Sidebar
         view={view}
         setView={setView}
@@ -826,9 +873,10 @@ export function App() {
       <div className="main">
         {view === "status" ? (
           <StatusView
-            settings={settings}
-            model={settings.model}
-            streaming={streaming}
+            endpoints={config.saved_endpoints.map((e) => e.url)}
+            endpoint={statusEndpoint}
+            liveEndpoint={settings.endpoint}
+            onChangeEndpoint={setStatusEndpoint}
             metrics={metrics}
             snapshot={snapshot}
           />
