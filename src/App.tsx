@@ -1,6 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./lib/tauri";
-import type { Config, ConversationDto, SettingsDto, SendParams } from "./types";
+import type {
+  Config,
+  ConversationDto,
+  PendingApproval,
+  SettingsDto,
+  SendParams,
+} from "./types";
 import { Sidebar, type View } from "./components/Sidebar";
 import { ChatView } from "./components/ChatView";
 import { StatusView, type LiveMetrics } from "./components/StatusView";
@@ -59,6 +65,9 @@ export function App() {
   const [showSettings, setShowSettings] = useState(false);
   const [metrics, setMetrics] = useState<LiveMetrics>(EMPTY_METRICS);
   const [searchQuery, setSearchQuery] = useState("");
+  const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(
+    null,
+  );
 
   const reasoningBuf = useRef("");
   const contentBuf = useRef("");
@@ -111,6 +120,13 @@ export function App() {
         role: m.role,
         text: m.text,
         images: m.images,
+        toolCalls: m.tool_calls
+          ? m.tool_calls.map((tc) => ({
+              id: tc.id,
+              name: tc.name,
+              arguments: tc.arguments,
+            }))
+          : undefined,
       })),
     );
     setSettings(data.settings);
@@ -130,13 +146,13 @@ export function App() {
     setSettings((prev) => (prev ? { ...prev, model: m[0] ?? prev.model } : prev));
   };
 
-  const updateLastAssistant = () => {
-    const text = combine(reasoningBuf.current, contentBuf.current);
+  // Mutate the most recent assistant message (the one currently streaming).
+  const patchLastAssistant = (fn: (m: ChatMessage) => ChatMessage) => {
     setMessages((prev) => {
       const next = prev.slice();
       for (let i = next.length - 1; i >= 0; i--) {
         if (next[i].role === "assistant") {
-          next[i] = { ...next[i], text };
+          next[i] = fn(next[i]);
           break;
         }
       }
@@ -144,16 +160,18 @@ export function App() {
     });
   };
 
+  const updateLastAssistant = () => {
+    const text = combine(reasoningBuf.current, contentBuf.current);
+    patchLastAssistant((m) => ({ ...m, text }));
+  };
+
   const send = async (text: string) => {
     if (!settings || !settings.model) return;
     setError(null);
+    setPendingApproval(null);
     reasoningBuf.current = "";
     contentBuf.current = "";
-    setMessages((prev) => [
-      ...prev,
-      { id: null, role: "user", text },
-      { id: null, role: "assistant", text: "", streaming: true },
-    ]);
+    setMessages((prev) => [...prev, { id: null, role: "user", text }]);
     setStreaming(true);
     setMetrics((m) => ({ ...m, activeRequests: 1, decode: null, ttft: null, prefill: null }));
 
@@ -178,6 +196,23 @@ export function App() {
           case "started":
             if (activeConvId === null) setActiveConvId(ev.conversation_id);
             break;
+          case "turn_start":
+            // Close out the previous assistant turn, reset buffers, and open a
+            // fresh streaming placeholder for this turn.
+            reasoningBuf.current = "";
+            contentBuf.current = "";
+            setMessages((prev) => {
+              const next = prev.map((m) =>
+                m.role === "assistant" && m.streaming
+                  ? { ...m, streaming: false }
+                  : m,
+              );
+              return [
+                ...next,
+                { id: null, role: "assistant", text: "", streaming: true },
+              ];
+            });
+            break;
           case "token":
             contentBuf.current += ev.text;
             updateLastAssistant();
@@ -185,6 +220,35 @@ export function App() {
           case "reasoning":
             reasoningBuf.current += ev.text;
             updateLastAssistant();
+            break;
+          case "tool_call":
+            patchLastAssistant((m) => ({
+              ...m,
+              toolCalls: [
+                ...(m.toolCalls ?? []),
+                { id: ev.id, name: ev.name, arguments: ev.arguments },
+              ],
+            }));
+            break;
+          case "tool_approval":
+            setPendingApproval({
+              id: ev.id,
+              name: ev.name,
+              arguments: ev.arguments,
+            });
+            break;
+          case "tool_result":
+            setPendingApproval(null);
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: null,
+                role: "tool",
+                text: ev.result,
+                toolName: ev.name,
+                isError: ev.is_error,
+              },
+            ]);
             break;
           case "usage":
             setMetrics((m) => ({
@@ -234,6 +298,10 @@ export function App() {
       setError(String(e));
     } finally {
       setStreaming(false);
+      setPendingApproval(null);
+      setMessages((prev) =>
+        prev.map((m) => (m.streaming ? { ...m, streaming: false } : m)),
+      );
       setMetrics((m) => ({ ...m, activeRequests: 0 }));
       refreshConversations();
     }
@@ -241,6 +309,12 @@ export function App() {
 
   const stop = async () => {
     await api.cancelStream();
+  };
+
+  const resolveTool = async (approved: boolean) => {
+    if (!pendingApproval) return;
+    await api.resolveTool(pendingApproval.id, approved);
+    setPendingApproval(null);
   };
 
   const saveConfig = async (next: Config) => {
@@ -304,6 +378,8 @@ export function App() {
             models={models}
             messages={messages}
             streaming={streaming}
+            pendingApproval={pendingApproval}
+            onResolveTool={resolveTool}
             onSend={send}
             onStop={stop}
             onChangeModel={changeModel}

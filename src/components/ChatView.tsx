@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import type { Config, SettingsDto } from "../types";
+import type { Config, PendingApproval, SettingsDto } from "../types";
 import type { ChatMessage } from "./MessageItem";
 import { MessageItem } from "./MessageItem";
+import { ApprovalCard } from "./ApprovalCard";
 
 interface Props {
   config: Config;
@@ -9,6 +10,8 @@ interface Props {
   models: string[];
   messages: ChatMessage[];
   streaming: boolean;
+  pendingApproval: PendingApproval | null;
+  onResolveTool: (approved: boolean) => void;
   onSend: (text: string) => void;
   onStop: () => void;
   onChangeModel: (model: string) => void;
@@ -126,6 +129,12 @@ export function ChatView(props: Props) {
 
       <div className="composer">
         <div className="composer-inner">
+          {props.pendingApproval && (
+            <ApprovalCard
+              approval={props.pendingApproval}
+              onResolve={props.onResolveTool}
+            />
+          )}
           <div className="composer-box">
             <textarea
               ref={taRef}

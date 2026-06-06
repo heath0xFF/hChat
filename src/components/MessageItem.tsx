@@ -1,12 +1,21 @@
 import { parseThink } from "../lib/segments";
 import { Markdown } from "./Markdown";
 
+export interface ToolCallChip {
+  id: string;
+  name: string;
+  arguments: string;
+}
+
 export interface ChatMessage {
   id: number | null;
   role: "system" | "user" | "assistant" | "tool";
   text: string;
   images?: string[];
   streaming?: boolean;
+  toolCalls?: ToolCallChip[];
+  toolName?: string;
+  isError?: boolean;
 }
 
 interface Props {
@@ -27,12 +36,17 @@ export function MessageItem({ msg, onOpenArtifact }: Props) {
       <div className="msg tool">
         <div className="avatar">fn</div>
         <div className="body">
-          <div className="who">tool result</div>
-          <div className="code-block">
-            <pre>
-              <code>{msg.text}</code>
-            </pre>
+          <div className="who">
+            {msg.toolName ?? "tool"} {msg.isError ? "· error" : "· result"}
           </div>
+          <details className="think" open={false}>
+            <summary>{msg.isError ? "error output" : "result"}</summary>
+            <div className="think-body">
+              <pre style={{ margin: 0, whiteSpace: "pre-wrap" }}>
+                <code>{msg.text}</code>
+              </pre>
+            </div>
+          </details>
         </div>
       </div>
     );
@@ -81,8 +95,31 @@ export function MessageItem({ msg, onOpenArtifact }: Props) {
             <Markdown text={body} onOpenArtifact={onOpenArtifact} />
           </div>
         )}
+        {msg.toolCalls && msg.toolCalls.length > 0 && (
+          <div className="tool-chips">
+            {msg.toolCalls.map((tc) => (
+              <span className="tool-chip" key={tc.id} title={tc.arguments}>
+                <span className="fn-ico">ƒ</span>
+                {tc.name}
+                <span className="chip-args">{shortArgs(tc.arguments)}</span>
+              </span>
+            ))}
+          </div>
+        )}
         {showCursor && <span className="cursor" />}
       </div>
     </div>
   );
+}
+
+function shortArgs(json: string): string {
+  try {
+    const obj = JSON.parse(json);
+    const s = Object.entries(obj)
+      .map(([k, v]) => `${k}: ${typeof v === "string" ? v : JSON.stringify(v)}`)
+      .join(", ");
+    return s.length > 60 ? s.slice(0, 60) + "…" : s;
+  } catch {
+    return "";
+  }
 }

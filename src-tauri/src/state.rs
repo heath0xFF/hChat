@@ -1,7 +1,9 @@
 use crate::config::Config;
 use crate::storage::Storage;
 use crate::tools::{self, ToolDef};
+use std::collections::HashMap;
 use std::sync::Mutex;
+use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
 /// All long-lived app state, managed by Tauri and shared across commands.
@@ -17,6 +19,10 @@ pub struct AppState {
     /// Cancellation token for the in-flight chat stream, if any. Replaced on
     /// each `send_message`; `cancel_stream` fires it.
     pub cancel: Mutex<Option<CancellationToken>>,
+    /// Tool calls awaiting user approval, keyed by tool_call id. The streaming
+    /// task parks a oneshot here and emits a `tool_approval` event; the
+    /// `resolve_tool` command fulfills it with the user's decision.
+    pub pending_approvals: Mutex<HashMap<String, oneshot::Sender<bool>>>,
 }
 
 impl AppState {
@@ -31,6 +37,7 @@ impl AppState {
             config: Mutex::new(config),
             tools: Mutex::new(loaded),
             cancel: Mutex::new(None),
+            pending_approvals: Mutex::new(HashMap::new()),
         }
     }
 

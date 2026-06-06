@@ -5,15 +5,20 @@
 
 use crate::api::{self, ChatParams, StreamEvent};
 use crate::config::Config;
-use crate::message::{ContentPart, Message, Role};
+use crate::message::{ContentPart, Message, Role, ToolCall};
 use crate::state::AppState;
 use crate::storage::ConversationSettings;
+use crate::tools::{self, Handler, Safety, ToolDef};
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use std::time::Instant;
 use tauri::State;
 use tauri::ipc::Channel;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
+
+/// Max tool-call → re-stream cycles per user turn (matches the egui app).
+const MAX_TOOL_ITERATIONS: usize = 8;
 
 // ---------- DTOs ----------
 
@@ -94,8 +99,34 @@ pub enum ChatEvent {
     /// Conversation id, emitted first (covers the create-on-first-send case so
     /// the UI can adopt the new id immediately).
     Started { conversation_id: i64 },
+    /// A new assistant turn is starting — the frontend pushes a fresh assistant
+    /// placeholder. Emitted before the first turn and before each tool-driven
+    /// continuation turn.
+    TurnStart,
     Token { text: String },
     Reasoning { text: String },
+    /// The model requested a tool call (attached to the current assistant
+    /// message as a chip).
+    ToolCall {
+        id: String,
+        name: String,
+        arguments: String,
+    },
+    /// A Confirm-safety tool needs the user's go-ahead before it runs. The
+    /// frontend shows an approval card and calls `resolve_tool`.
+    ToolApproval {
+        id: String,
+        name: String,
+        arguments: String,
+    },
+    /// A tool finished (or was denied) — the frontend appends a tool result
+    /// bubble.
+    ToolResult {
+        id: String,
+        name: String,
+        result: String,
+        is_error: bool,
+    },
     Usage {
         prompt_tokens: Option<u32>,
         completion_tokens: Option<u32>,
@@ -274,13 +305,20 @@ pub fn cancel_stream(state: State<'_, AppState>) {
 }
 
 #[tauri::command]
+pub fn resolve_tool(state: State<'_, AppState>, call_id: String, approved: bool) {
+    if let Some(tx) = state.pending_approvals.lock().unwrap().remove(&call_id) {
+        let _ = tx.send(approved);
+    }
+}
+
+#[tauri::command]
 pub async fn send_message(
     state: State<'_, AppState>,
     params: SendParams,
     on_event: Channel<ChatEvent>,
 ) -> Result<i64, String> {
-    // --- phase 1: synchronous setup (no await while locked) ---
-    let (conversation_id, mut messages, wire_messages, settings_to_save, api_key) = {
+    // --- synchronous setup (no await while locked) ---
+    let (conversation_id, mut messages, api_key, working_dir) = {
         let storage = state.storage.lock().unwrap();
 
         let conversation_id = match params.conversation_id {
@@ -290,15 +328,7 @@ pub async fn send_message(
 
         // Existing active-path history (each carries its DB id).
         let mut messages = storage.load_messages(conversation_id);
-        // Append the new user turn (unsaved → id None).
         messages.push(Message::text(Role::User, params.user_text.clone()));
-
-        // Build the wire payload: optional system prompt + full history.
-        let mut wire_messages = Vec::with_capacity(messages.len() + 1);
-        if !params.system_prompt.trim().is_empty() {
-            wire_messages.push(Message::text(Role::System, params.system_prompt.clone()));
-        }
-        wire_messages.extend(messages.iter().cloned());
 
         let settings_to_save = ConversationSettings {
             model: Some(params.model.clone()),
@@ -311,8 +341,15 @@ pub async fn send_message(
             presence_penalty: params.presence_penalty,
             stop_sequences: params.stop_sequences.clone(),
             endpoint: Some(params.endpoint.clone()),
-            working_dir: None,
+            working_dir: storage
+                .load_conversation_settings(conversation_id)
+                .working_dir,
         };
+        let working_dir = settings_to_save
+            .working_dir
+            .clone()
+            .map(PathBuf::from)
+            .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")));
 
         let api_key = {
             let cfg = state.config.lock().unwrap();
@@ -322,27 +359,166 @@ pub async fn send_message(
                 .and_then(|e| e.api_key.clone())
         };
 
-        (conversation_id, messages, wire_messages, settings_to_save, api_key)
+        // Persist the user turn + settings up front.
+        storage.save_messages(conversation_id, &mut messages)?;
+        storage.save_conversation_settings(conversation_id, &settings_to_save);
+
+        (conversation_id, messages, api_key, working_dir)
+    };
+
+    // Snapshot the loaded tools for this turn.
+    let tool_defs: Vec<ToolDef> = state.tools.lock().unwrap().clone();
+    let tools_api = if tool_defs.is_empty() {
+        None
+    } else {
+        Some(tools::to_api_shape(&tool_defs))
     };
 
     on_event.send(ChatEvent::Started { conversation_id }).ok();
 
-    // Persist the user message + settings now so it survives a mid-stream quit.
-    {
-        let storage = state.storage.lock().unwrap();
-        storage.save_messages(conversation_id, &mut messages)?;
-        storage.save_conversation_settings(conversation_id, &settings_to_save);
-    }
-
-    // --- phase 2: stream ---
     let cancel = CancellationToken::new();
     *state.cancel.lock().unwrap() = Some(cancel.clone());
 
+    let mut final_message_id = None;
+    let mut errored = false;
+
+    for iteration in 0..MAX_TOOL_ITERATIONS {
+        if cancel.is_cancelled() {
+            break;
+        }
+        on_event.send(ChatEvent::TurnStart).ok();
+
+        // Build the wire payload: optional system prompt + full history so far.
+        let mut wire = Vec::with_capacity(messages.len() + 1);
+        if !params.system_prompt.trim().is_empty() {
+            wire.push(Message::text(Role::System, params.system_prompt.clone()));
+        }
+        wire.extend(messages.iter().cloned());
+
+        let outcome = stream_once(
+            &params,
+            wire,
+            api_key.clone(),
+            tools_api.clone(),
+            cancel.clone(),
+            &on_event,
+        )
+        .await;
+
+        if outcome.errored {
+            errored = true;
+            break;
+        }
+
+        // Persist the assistant turn (content + any reasoning + tool_calls).
+        let stored = combine_stored(&outcome.reasoning, &outcome.content);
+        let mut assistant = Message::text(Role::Assistant, stored);
+        if !outcome.tool_calls.is_empty() {
+            assistant.tool_calls = Some(outcome.tool_calls.clone());
+        }
+        messages.push(assistant);
+        {
+            let storage = state.storage.lock().unwrap();
+            storage.save_messages(conversation_id, &mut messages)?;
+        }
+        final_message_id = messages.last().and_then(|m| m.id);
+
+        // No tools requested, or we've hit the cap → end the turn.
+        if outcome.tool_calls.is_empty() || iteration + 1 >= MAX_TOOL_ITERATIONS {
+            break;
+        }
+
+        // Execute each requested tool, appending a tool-result message.
+        for call in &outcome.tool_calls {
+            on_event
+                .send(ChatEvent::ToolCall {
+                    id: call.id.clone(),
+                    name: call.function.name.clone(),
+                    arguments: call.function.arguments.clone(),
+                })
+                .ok();
+
+            let def = tool_defs.iter().find(|d| d.name == call.function.name).cloned();
+            let (result, is_error) = match def {
+                None => (format!("unknown tool: {}", call.function.name), true),
+                Some(def) => {
+                    let approved = match def.safety {
+                        Safety::Auto => true,
+                        Safety::Confirm => {
+                            request_approval(&state, &on_event, call, &cancel).await
+                        }
+                    };
+                    if !approved {
+                        ("Tool call denied by user.".to_string(), true)
+                    } else {
+                        execute_tool(def, call, working_dir.clone()).await
+                    }
+                }
+            };
+
+            on_event
+                .send(ChatEvent::ToolResult {
+                    id: call.id.clone(),
+                    name: call.function.name.clone(),
+                    result: result.clone(),
+                    is_error,
+                })
+                .ok();
+            messages.push(Message::tool_result(call.id.clone(), result));
+        }
+        {
+            let storage = state.storage.lock().unwrap();
+            storage.save_messages(conversation_id, &mut messages)?;
+        }
+        // loop continues → re-stream with the tool results in context
+    }
+
+    *state.cancel.lock().unwrap() = None;
+
+    if !errored {
+        maybe_auto_title(&state, conversation_id, &params).await;
+    }
+
+    on_event
+        .send(ChatEvent::Done {
+            message_id: final_message_id,
+        })
+        .ok();
+    Ok(conversation_id)
+}
+
+/// Reasoning is persisted inline as a leading `<think>` block so it round-trips
+/// and the frontend can collapse it on reload.
+fn combine_stored(reasoning: &str, content: &str) -> String {
+    if reasoning.is_empty() {
+        content.to_string()
+    } else {
+        format!("<think>{reasoning}</think>\n{content}")
+    }
+}
+
+struct StreamOutcome {
+    content: String,
+    reasoning: String,
+    tool_calls: Vec<ToolCall>,
+    errored: bool,
+}
+
+/// Run one streaming completion, forwarding tokens/reasoning/usage/metrics to
+/// the frontend and returning the assembled result for the orchestration loop.
+async fn stream_once(
+    params: &SendParams,
+    wire: Vec<Message>,
+    api_key: Option<String>,
+    tools: Option<Vec<serde_json::Value>>,
+    cancel: CancellationToken,
+    on_event: &Channel<ChatEvent>,
+) -> StreamOutcome {
     let (tx, mut rx) = mpsc::unbounded_channel::<StreamEvent>();
     let chat_params = ChatParams {
         base_url: params.endpoint.clone(),
         model: params.model.clone(),
-        messages: wire_messages,
+        messages: wire,
         temperature: params.temperature,
         max_tokens: if params.use_max_tokens {
             params.max_tokens
@@ -358,14 +534,15 @@ pub async fn send_message(
             Some(params.stop_sequences.clone())
         },
         api_key,
-        tools: None, // tool calling layered in next
+        tools,
     };
-    api::stream_chat(chat_params, tx, cancel.clone());
+    api::stream_chat(chat_params, tx, cancel);
 
     let start = Instant::now();
     let mut first_token_at: Option<Instant> = None;
-    let mut reasoning = String::new();
     let mut content = String::new();
+    let mut reasoning = String::new();
+    let mut tool_calls: Vec<ToolCall> = Vec::new();
     let mut usage_prompt: Option<u32> = None;
     let mut usage_completion: Option<u32> = None;
     let mut errored = false;
@@ -373,21 +550,17 @@ pub async fn send_message(
     while let Some(ev) = rx.recv().await {
         match ev {
             StreamEvent::Token(t) => {
-                if first_token_at.is_none() {
-                    first_token_at = Some(Instant::now());
-                }
+                first_token_at.get_or_insert_with(Instant::now);
                 content.push_str(&t);
                 on_event.send(ChatEvent::Token { text: t }).ok();
             }
             StreamEvent::Reasoning(r) => {
-                if first_token_at.is_none() {
-                    first_token_at = Some(Instant::now());
-                }
+                first_token_at.get_or_insert_with(Instant::now);
                 reasoning.push_str(&r);
                 on_event.send(ChatEvent::Reasoning { text: r }).ok();
             }
-            StreamEvent::ToolCalls(_) => {
-                // Tool execution loop is added in the next milestone; ignore for now.
+            StreamEvent::ToolCalls(calls) => {
+                tool_calls = calls;
             }
             StreamEvent::UsageInfo(u) => {
                 usage_prompt = u.prompt_tokens;
@@ -410,9 +583,6 @@ pub async fn send_message(
         }
     }
 
-    *state.cancel.lock().unwrap() = None;
-
-    // --- phase 3: metrics + persist assistant turn ---
     let now = Instant::now();
     let duration_ms = now.duration_since(start).as_secs_f64() * 1000.0;
     let ttft_ms = first_token_at.map(|t| t.duration_since(start).as_secs_f64() * 1000.0);
@@ -436,27 +606,61 @@ pub async fn send_message(
         })
         .ok();
 
-    let mut message_id = None;
-    if !errored && !(content.is_empty() && reasoning.is_empty()) {
-        // Persist reasoning inline as a leading <think> block so it round-trips
-        // and the frontend can collapse it on reload.
-        let stored = if reasoning.is_empty() {
-            content.clone()
-        } else {
-            format!("<think>{reasoning}</think>\n{content}")
-        };
-        messages.push(Message::text(Role::Assistant, stored));
-        {
-            let storage = state.storage.lock().unwrap();
-            storage.save_messages(conversation_id, &mut messages)?;
-        }
-        message_id = messages.last().and_then(|m| m.id);
-
-        maybe_auto_title(&state, conversation_id, &params).await;
+    StreamOutcome {
+        content,
+        reasoning,
+        tool_calls,
+        errored,
     }
+}
 
-    on_event.send(ChatEvent::Done { message_id }).ok();
-    Ok(conversation_id)
+/// Park a oneshot keyed by the tool_call id and emit a `tool_approval` event;
+/// resolves when `resolve_tool` fires or the stream is cancelled (→ denied).
+async fn request_approval(
+    state: &State<'_, AppState>,
+    on_event: &Channel<ChatEvent>,
+    call: &ToolCall,
+    cancel: &CancellationToken,
+) -> bool {
+    let (tx, rx) = oneshot::channel::<bool>();
+    state
+        .pending_approvals
+        .lock()
+        .unwrap()
+        .insert(call.id.clone(), tx);
+    on_event
+        .send(ChatEvent::ToolApproval {
+            id: call.id.clone(),
+            name: call.function.name.clone(),
+            arguments: call.function.arguments.clone(),
+        })
+        .ok();
+    tokio::select! {
+        r = rx => r.unwrap_or(false),
+        _ = cancel.cancelled() => {
+            state.pending_approvals.lock().unwrap().remove(&call.id);
+            false
+        }
+    }
+}
+
+/// Dispatch a tool call to its handler on a blocking thread (builtins and
+/// shell tools are synchronous and can run for a while). Returns
+/// `(output, is_error)`.
+async fn execute_tool(def: ToolDef, call: &ToolCall, wd: PathBuf) -> (String, bool) {
+    let args: serde_json::Value =
+        serde_json::from_str(&call.function.arguments).unwrap_or_else(|_| serde_json::json!({}));
+    let handler = def.handler.clone();
+    let res = tokio::task::spawn_blocking(move || match handler {
+        Handler::Builtin(b) => tools::run_builtin(&b.0, &args, &wd),
+        Handler::Shell { shell } => tools::run_shell_tool(&shell, &args, &wd),
+    })
+    .await;
+    match res {
+        Ok(Ok(out)) => (out, false),
+        Ok(Err(e)) => (e, true),
+        Err(e) => (format!("tool task failed: {e}"), true),
+    }
 }
 
 /// Generate a short title from the first exchange, once, in the background.

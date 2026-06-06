@@ -82,8 +82,18 @@ export interface SendParams {
 // Streaming events (serde tag = "type", snake_case)
 export type ChatEvent =
   | { type: "started"; conversation_id: number }
+  | { type: "turn_start" }
   | { type: "token"; text: string }
   | { type: "reasoning"; text: string }
+  | { type: "tool_call"; id: string; name: string; arguments: string }
+  | { type: "tool_approval"; id: string; name: string; arguments: string }
+  | {
+      type: "tool_result";
+      id: string;
+      name: string;
+      result: string;
+      is_error: boolean;
+    }
   | {
       type: "usage";
       prompt_tokens: number | null;
@@ -100,3 +110,9 @@ export type ChatEvent =
     }
   | { type: "done"; message_id: number | null }
   | { type: "error"; message: string };
+
+export interface PendingApproval {
+  id: string;
+  name: string;
+  arguments: string;
+}

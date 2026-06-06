@@ -441,6 +441,86 @@ select.model-select {
   font-family: var(--mono);
 }
 
+/* ---------- tool chips & approval ---------- */
+.tool-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+.tool-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--warn);
+  background: #20180a;
+  border: 1px solid #3a2c12;
+  border-radius: 6px;
+  padding: 3px 8px;
+}
+.tool-chip .fn-ico {
+  opacity: 0.8;
+}
+.tool-chip .chip-args {
+  color: var(--dim);
+}
+
+.approval {
+  border: 1px solid var(--warn);
+  background: #1c1608;
+  border-radius: 10px;
+  padding: 12px 14px;
+  margin: 10px 0;
+}
+.approval .ap-head {
+  font-size: 12px;
+  color: var(--warn);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  margin-bottom: 6px;
+}
+.approval .ap-name {
+  font-family: var(--mono);
+  font-size: 13px;
+  color: var(--text);
+  margin-bottom: 6px;
+}
+.approval pre {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--muted);
+  background: #0a0a0c;
+  border: 1px solid var(--border-soft);
+  border-radius: 6px;
+  padding: 8px 10px;
+  margin: 0 0 10px;
+  max-height: 140px;
+  overflow: auto;
+}
+.approval .ap-actions {
+  display: flex;
+  gap: 8px;
+}
+.approval .ap-approve {
+  background: var(--accent);
+  color: #04201d;
+  border: none;
+  border-radius: 7px;
+  padding: 6px 14px;
+  font-weight: 600;
+  font-size: 12.5px;
+}
+.approval .ap-deny {
+  background: transparent;
+  color: var(--danger);
+  border: 1px solid #5a2a2c;
+  border-radius: 7px;
+  padding: 6px 14px;
+  font-size: 12.5px;
+}
+
 /* ---------- Composer ---------- */
 .composer {
   border-top: 1px solid var(--border-soft);

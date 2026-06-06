@@ -38,6 +38,7 @@ pub fn run() {
             commands::export_conversation,
             commands::cancel_stream,
             commands::send_message,
+            commands::resolve_tool,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

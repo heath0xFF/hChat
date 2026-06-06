@@ -35,6 +35,12 @@ pub struct Storage {
     conn: Connection,
 }
 
+impl Default for Storage {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Storage {
     pub fn new() -> Self {
         let path = Self::db_path();

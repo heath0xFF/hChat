@@ -28,6 +28,8 @@ export const api = {
     invoke<string>("export_conversation", { id }),
 
   cancelStream: () => invoke<void>("cancel_stream"),
+  resolveTool: (callId: string, approved: boolean) =>
+    invoke<void>("resolve_tool", { callId, approved }),
 
   /** Start a streaming generation. Returns the (possibly newly created)
    *  conversation id once the stream finishes. `onEvent` fires per chunk. */
