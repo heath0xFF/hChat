@@ -28,6 +28,9 @@ interface Props {
   onChangeEndpoint: (endpoint: string) => void;
   onOpenParams: () => void;
   onOpenArtifact?: (code: string, lang: string) => void;
+  artifactCount: number;
+  artifactOpen: boolean;
+  onToggleArtifacts: () => void;
   presets: PresetDto[];
   onApplyPreset: (p: PresetDto) => void;
   onSavePreset: (name: string) => void;
@@ -190,6 +193,15 @@ export function ChatView(props: Props) {
             }}
           >
             ✕
+          </button>
+        )}
+        {props.artifactCount > 0 && (
+          <button
+            className={`tbtn${props.artifactOpen ? " accent" : ""}`}
+            title="Artifacts"
+            onClick={props.onToggleArtifacts}
+          >
+            ◧ {props.artifactCount}
           </button>
         )}
         <button className="tbtn" onClick={props.onOpenParams}>

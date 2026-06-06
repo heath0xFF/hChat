@@ -17,7 +17,14 @@ import { Sidebar, type View } from "./components/Sidebar";
 import { ChatView } from "./components/ChatView";
 import { StatusView, type LiveMetrics } from "./components/StatusView";
 import { SettingsModal } from "./components/SettingsModal";
+import { ArtifactPanel } from "./components/ArtifactPanel";
 import type { ChatMessage } from "./components/MessageItem";
+import {
+  collectArtifacts,
+  isPreviewable,
+  makeArtifact,
+  type Artifact,
+} from "./lib/artifacts";
 
 const EMPTY_METRICS: LiveMetrics = {
   decode: null,
@@ -93,6 +100,9 @@ export function App() {
   const [siblingMap, setSiblingMap] = useState<Record<number, SiblingInfo>>({});
   const [presets, setPresets] = useState<PresetDto[]>([]);
   const [snapshot, setSnapshot] = useState<MetricsSnapshot | null>(null);
+  const [artifacts, setArtifacts] = useState<Artifact[]>([]);
+  const [currentArtifact, setCurrentArtifact] = useState<Artifact | null>(null);
+  const [artifactOpen, setArtifactOpen] = useState(false);
 
   const reasoningBuf = useRef("");
   const contentBuf = useRef("");
@@ -158,6 +168,28 @@ export function App() {
   useEffect(() => {
     if (settings?.endpoint) void api.setMetricsTarget(settings.endpoint);
   }, [settings?.endpoint]);
+
+  // Re-collect artifacts whenever the visible message path changes.
+  useEffect(() => {
+    setArtifacts(collectArtifacts(messages));
+  }, [messages]);
+
+  const openArtifact = (code: string, lang: string) => {
+    const match = artifacts.find((a) => a.code === code) ?? makeArtifact(code, lang);
+    setCurrentArtifact(match);
+    setArtifactOpen(true);
+  };
+
+  const toggleArtifacts = () => {
+    if (artifactOpen) {
+      setArtifactOpen(false);
+      return;
+    }
+    if (!currentArtifact && artifacts.length > 0) {
+      setCurrentArtifact(artifacts[artifacts.length - 1]);
+    }
+    if (artifacts.length > 0 || currentArtifact) setArtifactOpen(true);
+  };
 
   const newChat = () => {
     if (!config) return;
@@ -347,10 +379,12 @@ export function App() {
 
   // After a turn, reload the canonical active path from the DB so message ids
   // and branch structure are correct for subsequent edit/regenerate/navigate.
-  const reloadAndIndex = async (id: number) => {
+  const reloadAndIndex = async (id: number): Promise<ChatMessage[]> => {
     const data = await api.loadConversation(id);
-    setMessages(data.messages.map(toChatMessage));
+    const msgs = data.messages.map(toChatMessage);
+    setMessages(msgs);
     await buildSiblingMap(data.messages);
+    return msgs;
   };
 
   const runStream = async (
@@ -380,7 +414,16 @@ export function App() {
         prev.map((m) => (m.streaming ? { ...m, streaming: false } : m)),
       );
       setMetrics((m) => ({ ...m, activeRequests: 0 }));
-      if (id != null) await reloadAndIndex(id);
+      if (id != null) {
+        const msgs = await reloadAndIndex(id);
+        // Auto-open a freshly generated previewable artifact (HTML/SVG/MD),
+        // Claude-Desktop style.
+        const preview = [...collectArtifacts(msgs)].reverse().find(isPreviewable);
+        if (preview) {
+          setCurrentArtifact(preview);
+          setArtifactOpen(true);
+        }
+      }
       refreshConversations();
     }
   };
@@ -519,8 +562,10 @@ export function App() {
     return <div className="empty" style={{ height: "100vh" }}>Loading…</div>;
   }
 
+  const showArtifact = artifactOpen && currentArtifact;
+
   return (
-    <div className="app">
+    <div className={`app${showArtifact ? " with-artifact" : ""}`}>
       <Sidebar
         view={view}
         setView={setView}
@@ -576,9 +621,27 @@ export function App() {
             onChangeModel={changeModel}
             onChangeEndpoint={changeEndpoint}
             onOpenParams={() => setShowSettings(true)}
+            onOpenArtifact={openArtifact}
+            artifactCount={artifacts.length}
+            artifactOpen={artifactOpen}
+            onToggleArtifacts={toggleArtifacts}
           />
         )}
       </div>
+
+      {showArtifact && currentArtifact && (
+        <ArtifactPanel
+          artifact={currentArtifact}
+          artifacts={artifacts.length > 0 ? artifacts : [currentArtifact]}
+          onSelect={(id) => {
+            const a =
+              artifacts.find((x) => x.id === id) ??
+              (currentArtifact.id === id ? currentArtifact : null);
+            if (a) setCurrentArtifact(a);
+          }}
+          onClose={() => setArtifactOpen(false)}
+        />
+      )}
 
       {showSettings && (
         <SettingsModal

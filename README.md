@@ -19,8 +19,8 @@ VRAM, power, and GPU stats for each.
 >   (Apple Silicon, no sudo) and the `hchat-agent` on the Spark, plus vLLM /
 >   llama.cpp Prometheus scraping. The Status view shows decode/TTFT/prefill,
 >   requests, VRAM, power, temp, and per-GPU rows.
-> - **Phase C — artifacts sidebar (upcoming):** Claude-Desktop-style rendering of
->   the markdown/code/HTML your models produce.
+> - **Phase C — artifacts sidebar (done):** a collapsible panel that renders the
+>   HTML/SVG/Markdown/code your models produce, Claude-Desktop style.
 
 ## Features (today)
 
@@ -38,6 +38,10 @@ VRAM, power, and GPU stats for each.
   drop text files (rs, py, md, json, …) to inline them as fenced code
 - **Presets** — save the current model + endpoint + sampling bundle by name and
   apply it elsewhere
+- **Artifacts panel** — a collapsible side panel that renders the HTML (live,
+  sandboxed iframe), SVG, Markdown, and code blocks your models produce, with a
+  preview/source toggle. Opens automatically for fresh HTML/SVG, or from the
+  `open` button on any code block
 - **Reasoning models** — inline `<think>` blocks and provider `reasoning` deltas
   (qwen3, deepseek-r1, gpt-oss, …) render as collapsible sections
 - **Markdown rendering** with syntax highlighting (shiki) and per-code-block copy

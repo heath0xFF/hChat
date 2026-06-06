@@ -71,7 +71,9 @@ Tauri splits the app into a **Rust backend** (`src-tauri/`) and a **web frontend
 - **`components/`** — `Sidebar`, `ChatView` (topbar + composer + attachments +
   presets), `MessageItem` (markdown, reasoning, tool chips, branch nav, inline
   edit), `Markdown` + `CodeBlock` (react-markdown + shiki), `StatusView` (the
-  dashboard scaffold), `SettingsModal`, `ApprovalCard`.
+  live metrics dashboard), `ArtifactPanel` (HTML/SVG/Markdown/code preview),
+  `SettingsModal`, `ApprovalCard`. `lib/artifacts.ts` extracts artifacts from
+  assistant messages; the backend `metrics` event drives `StatusView`.
 - **`styles.css`** — hand-rolled terminal-minimal dark theme (CSS variables).
 
 ## Key Design Decisions

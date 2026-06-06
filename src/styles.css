@@ -857,6 +857,85 @@ select.model-select {
   padding: 40px 0;
 }
 
+/* ---------- artifacts panel ---------- */
+.app.with-artifact {
+  grid-template-columns: var(--rail-w) minmax(0, 1fr) minmax(380px, 0.9fr);
+}
+.artifact-panel {
+  border-left: 1px solid var(--border-soft);
+  background: #0a0a0c;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+}
+.artifact-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border-soft);
+  min-height: 52px;
+}
+.artifact-select {
+  flex: 1;
+  min-width: 0;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--text);
+  padding: 6px 10px;
+  font-size: 13px;
+  outline: none;
+}
+.artifact-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  overflow: hidden;
+}
+.seg button {
+  background: transparent;
+  border: none;
+  color: var(--dim);
+  font-size: 11.5px;
+  padding: 5px 10px;
+}
+.seg button.on {
+  background: var(--panel-3);
+  color: var(--text);
+}
+.artifact-body {
+  flex: 1;
+  overflow: auto;
+  min-height: 0;
+}
+.artifact-frame {
+  width: 100%;
+  height: 100%;
+  border: none;
+  background: #fff;
+}
+.artifact-svg {
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: #fff;
+  min-height: 100%;
+}
+.artifact-svg svg {
+  max-width: 100%;
+  height: auto;
+}
+.artifact-md {
+  padding: 20px 22px;
+}
+
 /* ---------- modal ---------- */
 .modal-backdrop {
   position: fixed;
