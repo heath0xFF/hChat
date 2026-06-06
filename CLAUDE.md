@@ -109,7 +109,9 @@ Tauri splits the app into a **Rust backend** (`src-tauri/`) and a **web frontend
 
 ## Not yet ported from the egui app
 
-Slash-command UI, find-in-conversation, draft persistence, the live tiktoken token
-counter, configurable fonts/UI-scale/theme-toggle, and the "approve all in this
-conversation" tool allowlist. The storage/`slash.rs` primitives for several of
-these still exist and can be re-wired.
+Most parity features are back: slash commands (`lib/slash.ts`), find-in-conversation
+(Cmd+F), per-conversation drafts (`save_draft` + lifted composer input), the live
+token counter (`gpt-tokenizer`), and theme/fonts/UI-scale (`applyAppearance` in
+App.tsx). Still missing: the "approve all in this conversation" tool allowlist
+(approvals are per-call), a one-click markdown-export button (the `export_conversation`
+command exists), and per-message hover timestamps.
