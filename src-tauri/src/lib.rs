@@ -38,6 +38,10 @@ pub fn run() {
             commands::export_conversation,
             commands::cancel_stream,
             commands::send_message,
+            commands::regenerate,
+            commands::edit_message,
+            commands::message_siblings,
+            commands::walk_from,
             commands::resolve_tool,
         ])
         .run(tauri::generate_context!())

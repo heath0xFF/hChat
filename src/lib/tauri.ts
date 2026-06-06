@@ -4,7 +4,10 @@ import type {
   ConversationData,
   ConversationDto,
   ChatEvent,
+  GenParams,
+  MessageDto,
   SendParams,
+  SiblingInfo,
 } from "../types";
 
 export const api = {
@@ -38,4 +41,31 @@ export const api = {
     channel.onmessage = onEvent;
     return invoke<number>("send_message", { params, onEvent: channel });
   },
+
+  regenerate: (
+    params: GenParams & { conversation_id: number },
+    onEvent: (ev: ChatEvent) => void,
+  ) => {
+    const channel = new Channel<ChatEvent>();
+    channel.onmessage = onEvent;
+    return invoke<number>("regenerate", { params, onEvent: channel });
+  },
+
+  editMessage: (
+    params: GenParams & {
+      conversation_id: number;
+      message_id: number;
+      new_text: string;
+    },
+    onEvent: (ev: ChatEvent) => void,
+  ) => {
+    const channel = new Channel<ChatEvent>();
+    channel.onmessage = onEvent;
+    return invoke<number>("edit_message", { params, onEvent: channel });
+  },
+
+  messageSiblings: (messageId: number) =>
+    invoke<SiblingInfo>("message_siblings", { messageId }),
+  walkFrom: (startId: number) =>
+    invoke<MessageDto[]>("walk_from", { startId }),
 };

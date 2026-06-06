@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api } from "./lib/tauri";
 import type {
+  ChatEvent,
   Config,
   ConversationDto,
+  GenParams,
+  MessageDto,
   PendingApproval,
   SettingsDto,
-  SendParams,
+  SiblingInfo,
 } from "./types";
 import { Sidebar, type View } from "./components/Sidebar";
 import { ChatView } from "./components/ChatView";
@@ -52,6 +55,22 @@ function combine(reasoning: string, content: string): string {
   return `<think>${reasoning}</think>\n${content}`;
 }
 
+function toChatMessage(m: MessageDto): ChatMessage {
+  return {
+    id: m.id,
+    role: m.role,
+    text: m.text,
+    images: m.images,
+    toolCalls: m.tool_calls
+      ? m.tool_calls.map((tc) => ({
+          id: tc.id,
+          name: tc.name,
+          arguments: tc.arguments,
+        }))
+      : undefined,
+  };
+}
+
 export function App() {
   const [config, setConfig] = useState<Config | null>(null);
   const [conversations, setConversations] = useState<ConversationDto[]>([]);
@@ -68,9 +87,11 @@ export function App() {
   const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(
     null,
   );
+  const [siblingMap, setSiblingMap] = useState<Record<number, SiblingInfo>>({});
 
   const reasoningBuf = useRef("");
   const contentBuf = useRef("");
+  const convIdRef = useRef<number | null>(null);
 
   const refreshConversations = useCallback(async () => {
     setConversations(await api.listConversations());
@@ -114,21 +135,9 @@ export function App() {
   const selectConv = async (id: number) => {
     const data = await api.loadConversation(id);
     setActiveConvId(id);
-    setMessages(
-      data.messages.map((m) => ({
-        id: m.id,
-        role: m.role,
-        text: m.text,
-        images: m.images,
-        toolCalls: m.tool_calls
-          ? m.tool_calls.map((tc) => ({
-              id: tc.id,
-              name: tc.name,
-              arguments: tc.arguments,
-            }))
-          : undefined,
-      })),
-    );
+    convIdRef.current = id;
+    setMessages(data.messages.map(toChatMessage));
+    void buildSiblingMap(data.messages);
     setSettings(data.settings);
     setView("chat");
     const m = await loadModels(data.settings.endpoint);
@@ -165,35 +174,24 @@ export function App() {
     patchLastAssistant((m) => ({ ...m, text }));
   };
 
-  const send = async (text: string) => {
-    if (!settings || !settings.model) return;
-    setError(null);
-    setPendingApproval(null);
-    reasoningBuf.current = "";
-    contentBuf.current = "";
-    setMessages((prev) => [...prev, { id: null, role: "user", text }]);
-    setStreaming(true);
-    setMetrics((m) => ({ ...m, activeRequests: 1, decode: null, ttft: null, prefill: null }));
+  const genParamsFrom = (s: SettingsDto): GenParams => ({
+    endpoint: s.endpoint,
+    model: s.model ?? "",
+    system_prompt: s.system_prompt,
+    temperature: s.temperature,
+    max_tokens: s.max_tokens,
+    use_max_tokens: s.use_max_tokens,
+    top_p: s.top_p,
+    frequency_penalty: s.frequency_penalty,
+    presence_penalty: s.presence_penalty,
+    stop_sequences: s.stop_sequences,
+  });
 
-    const params: SendParams = {
-      conversation_id: activeConvId,
-      endpoint: settings.endpoint,
-      model: settings.model,
-      system_prompt: settings.system_prompt,
-      temperature: settings.temperature,
-      max_tokens: settings.max_tokens,
-      use_max_tokens: settings.use_max_tokens,
-      top_p: settings.top_p,
-      frequency_penalty: settings.frequency_penalty,
-      presence_penalty: settings.presence_penalty,
-      stop_sequences: settings.stop_sequences,
-      user_text: text,
-    };
-
-    try {
-      await api.sendMessage(params, (ev) => {
+  // Shared streaming event handler used by send / regenerate / edit.
+  const handleEvent = (ev: ChatEvent) => {
         switch (ev.type) {
           case "started":
+            convIdRef.current = ev.conversation_id;
             if (activeConvId === null) setActiveConvId(ev.conversation_id);
             break;
           case "turn_start":
@@ -293,7 +291,49 @@ export function App() {
             });
             break;
         }
-      });
+  };
+
+  // Fetch ◀ N/M ▶ sibling info for branch points in the path.
+  const buildSiblingMap = async (
+    msgs: { id: number | null; role: string }[],
+  ) => {
+    const ids = msgs
+      .filter((m) => m.id != null && (m.role === "user" || m.role === "assistant"))
+      .map((m) => m.id as number);
+    const infos = await Promise.all(ids.map((id) => api.messageSiblings(id)));
+    const map: Record<number, SiblingInfo> = {};
+    ids.forEach((id, i) => {
+      if (infos[i].total > 1) map[id] = infos[i];
+    });
+    setSiblingMap(map);
+  };
+
+  // After a turn, reload the canonical active path from the DB so message ids
+  // and branch structure are correct for subsequent edit/regenerate/navigate.
+  const reloadAndIndex = async (id: number) => {
+    const data = await api.loadConversation(id);
+    setMessages(data.messages.map(toChatMessage));
+    await buildSiblingMap(data.messages);
+  };
+
+  const runStream = async (
+    starter: (h: (ev: ChatEvent) => void) => Promise<number>,
+  ) => {
+    setError(null);
+    setPendingApproval(null);
+    reasoningBuf.current = "";
+    contentBuf.current = "";
+    setStreaming(true);
+    setMetrics((m) => ({
+      ...m,
+      activeRequests: 1,
+      decode: null,
+      ttft: null,
+      prefill: null,
+    }));
+    let id: number | null = convIdRef.current;
+    try {
+      id = await starter(handleEvent);
     } catch (e) {
       setError(String(e));
     } finally {
@@ -303,8 +343,81 @@ export function App() {
         prev.map((m) => (m.streaming ? { ...m, streaming: false } : m)),
       );
       setMetrics((m) => ({ ...m, activeRequests: 0 }));
+      if (id != null) await reloadAndIndex(id);
       refreshConversations();
     }
+  };
+
+  const send = (text: string, images: string[] = []) => {
+    if (!settings || !settings.model) return;
+    setMessages((prev) => [
+      ...prev,
+      { id: null, role: "user", text, images },
+    ]);
+    runStream((h) =>
+      api.sendMessage(
+        {
+          ...genParamsFrom(settings),
+          conversation_id: activeConvId,
+          user_text: text,
+          images,
+        },
+        h,
+      ),
+    );
+  };
+
+  const regenerate = () => {
+    if (!settings || !settings.model || activeConvId == null) return;
+    // Drop the trailing assistant/tool turn back to the last user message.
+    setMessages((prev) => {
+      let cut = prev.length;
+      for (let i = prev.length - 1; i >= 0; i--) {
+        if (prev[i].role === "user") break;
+        cut = i;
+      }
+      return prev.slice(0, cut);
+    });
+    runStream((h) =>
+      api.regenerate(
+        { ...genParamsFrom(settings), conversation_id: activeConvId },
+        h,
+      ),
+    );
+  };
+
+  const editMessage = (messageId: number, newText: string) => {
+    if (!settings || !settings.model || activeConvId == null) return;
+    setMessages((prev) => {
+      const pos = prev.findIndex((m) => m.id === messageId);
+      const prefix = pos >= 0 ? prev.slice(0, pos) : prev;
+      return [...prefix, { id: null, role: "user", text: newText }];
+    });
+    runStream((h) =>
+      api.editMessage(
+        {
+          ...genParamsFrom(settings),
+          conversation_id: activeConvId!,
+          message_id: messageId,
+          new_text: newText,
+        },
+        h,
+      ),
+    );
+  };
+
+  const navigateSibling = async (messageId: number, dir: -1 | 1) => {
+    const info = siblingMap[messageId];
+    if (!info || info.total <= 1) return;
+    const targetIdx = info.index + dir;
+    if (targetIdx < 0 || targetIdx >= info.total) return;
+    const pos = messages.findIndex((m) => m.id === messageId);
+    if (pos < 0) return;
+    const prefix = messages.slice(0, pos);
+    const suffix = await api.walkFrom(info.ids[targetIdx]);
+    const next = [...prefix, ...suffix.map(toChatMessage)];
+    setMessages(next);
+    await buildSiblingMap(next);
   };
 
   const stop = async () => {
@@ -379,9 +492,13 @@ export function App() {
             messages={messages}
             streaming={streaming}
             pendingApproval={pendingApproval}
+            siblingMap={siblingMap}
             onResolveTool={resolveTool}
             onSend={send}
             onStop={stop}
+            onRegenerate={regenerate}
+            onEditMessage={editMessage}
+            onNavigate={navigateSibling}
             onChangeModel={changeModel}
             onChangeEndpoint={changeEndpoint}
             onOpenParams={() => setShowSettings(true)}

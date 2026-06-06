@@ -1,3 +1,5 @@
+import { useState } from "react";
+import type { SiblingInfo } from "../types";
 import { parseThink } from "../lib/segments";
 import { Markdown } from "./Markdown";
 
@@ -21,6 +23,41 @@ export interface ChatMessage {
 interface Props {
   msg: ChatMessage;
   onOpenArtifact?: (code: string, lang: string) => void;
+  sibling?: SiblingInfo;
+  onNavigate?: (dir: -1 | 1) => void;
+  onEdit?: (newText: string) => void;
+  onRegenerate?: () => void;
+}
+
+function NavControls({
+  sibling,
+  onNavigate,
+}: {
+  sibling?: SiblingInfo;
+  onNavigate?: (dir: -1 | 1) => void;
+}) {
+  if (!sibling || sibling.total <= 1 || !onNavigate) return null;
+  return (
+    <span className="branch-nav">
+      <button
+        disabled={sibling.index <= 0}
+        onClick={() => onNavigate(-1)}
+        title="Previous version"
+      >
+        ◀
+      </button>
+      <span className="branch-count">
+        {sibling.index + 1}/{sibling.total}
+      </span>
+      <button
+        disabled={sibling.index >= sibling.total - 1}
+        onClick={() => onNavigate(1)}
+        title="Next version"
+      >
+        ▶
+      </button>
+    </span>
+  );
 }
 
 const AVATAR: Record<string, string> = {
@@ -30,7 +67,17 @@ const AVATAR: Record<string, string> = {
   system: "S",
 };
 
-export function MessageItem({ msg, onOpenArtifact }: Props) {
+export function MessageItem({
+  msg,
+  onOpenArtifact,
+  sibling,
+  onNavigate,
+  onEdit,
+  onRegenerate,
+}: Props) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState("");
+
   if (msg.role === "tool") {
     return (
       <div className="msg tool">
@@ -65,9 +112,55 @@ export function MessageItem({ msg, onOpenArtifact }: Props) {
               ))}
             </div>
           )}
-          <div className="md" style={{ whiteSpace: "pre-wrap" }}>
-            {msg.text}
-          </div>
+          {editing ? (
+            <div className="edit-box">
+              <textarea
+                autoFocus
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                    onEdit?.(draft);
+                    setEditing(false);
+                  }
+                  if (e.key === "Escape") setEditing(false);
+                }}
+              />
+              <div className="edit-actions">
+                <button
+                  className="ap-approve"
+                  onClick={() => {
+                    onEdit?.(draft);
+                    setEditing(false);
+                  }}
+                >
+                  Save &amp; resend
+                </button>
+                <button className="ap-deny" onClick={() => setEditing(false)}>
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="md" style={{ whiteSpace: "pre-wrap" }}>
+              {msg.text}
+            </div>
+          )}
+          {!editing && (onEdit || (sibling && sibling.total > 1)) && (
+            <div className="msg-actions">
+              {onEdit && msg.id != null && (
+                <button
+                  onClick={() => {
+                    setDraft(msg.text);
+                    setEditing(true);
+                  }}
+                >
+                  edit
+                </button>
+              )}
+              <NavControls sibling={sibling} onNavigate={onNavigate} />
+            </div>
+          )}
         </div>
       </div>
     );
@@ -107,6 +200,16 @@ export function MessageItem({ msg, onOpenArtifact }: Props) {
           </div>
         )}
         {showCursor && <span className="cursor" />}
+        {!msg.streaming && (onRegenerate || (sibling && sibling.total > 1)) && (
+          <div className="msg-actions">
+            {onRegenerate && (
+              <button onClick={onRegenerate} title="Regenerate">
+                ↻ regenerate
+              </button>
+            )}
+            <NavControls sibling={sibling} onNavigate={onNavigate} />
+          </div>
+        )}
       </div>
     </div>
   );

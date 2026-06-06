@@ -64,8 +64,8 @@ export interface ConversationData {
   settings: SettingsDto;
 }
 
-export interface SendParams {
-  conversation_id: number | null;
+// Shared generation knobs (flattened into the request payloads server-side).
+export interface GenParams {
   endpoint: string;
   model: string;
   system_prompt: string;
@@ -76,7 +76,18 @@ export interface SendParams {
   frequency_penalty: number | null;
   presence_penalty: number | null;
   stop_sequences: string[];
+}
+
+export interface SendParams extends GenParams {
+  conversation_id: number | null;
   user_text: string;
+  images: string[];
+}
+
+export interface SiblingInfo {
+  index: number;
+  total: number;
+  ids: number[];
 }
 
 // Streaming events (serde tag = "type", snake_case)

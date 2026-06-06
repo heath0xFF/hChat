@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { Config, PendingApproval, SettingsDto } from "../types";
+import type { Config, PendingApproval, SettingsDto, SiblingInfo } from "../types";
 import type { ChatMessage } from "./MessageItem";
 import { MessageItem } from "./MessageItem";
 import { ApprovalCard } from "./ApprovalCard";
@@ -11,9 +11,13 @@ interface Props {
   messages: ChatMessage[];
   streaming: boolean;
   pendingApproval: PendingApproval | null;
+  siblingMap: Record<number, SiblingInfo>;
   onResolveTool: (approved: boolean) => void;
-  onSend: (text: string) => void;
+  onSend: (text: string, images: string[]) => void;
   onStop: () => void;
+  onRegenerate: () => void;
+  onEditMessage: (messageId: number, newText: string) => void;
+  onNavigate: (messageId: number, dir: -1 | 1) => void;
   onChangeModel: (model: string) => void;
   onChangeEndpoint: (endpoint: string) => void;
   onOpenParams: () => void;
@@ -28,11 +32,49 @@ function runtimeBadge(endpoint: string): string {
   return "OPENAI";
 }
 
+const IMG_RE = /\.(png|jpe?g|webp|gif)$/i;
+const TEXT_RE = /\.(txt|md|rs|ts|tsx|js|jsx|py|json|toml|yaml|yml|c|cpp|h|go|sh|css|html)$/i;
+
+function readDataUrl(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result as string);
+    r.onerror = reject;
+    r.readAsDataURL(file);
+  });
+}
+
+function readText(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result as string);
+    r.onerror = reject;
+    r.readAsText(file);
+  });
+}
+
 export function ChatView(props: Props) {
   const [input, setInput] = useState("");
+  const [attachments, setAttachments] = useState<string[]>([]);
   const scrollRef = useRef<HTMLDivElement>(null);
   const taRef = useRef<HTMLTextAreaElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
   const atBottom = useRef(true);
+
+  const ingestFiles = async (files: FileList | File[]) => {
+    for (const file of Array.from(files)) {
+      if (IMG_RE.test(file.name) || file.type.startsWith("image/")) {
+        const url = await readDataUrl(file);
+        setAttachments((a) => [...a, url]);
+      } else if (TEXT_RE.test(file.name) || file.type.startsWith("text/")) {
+        const text = await readText(file);
+        const fence = "```";
+        setInput(
+          (v) => `${v}${v ? "\n\n" : ""}${fence} ${file.name}\n${text}\n${fence}\n`,
+        );
+      }
+    }
+  };
 
   // autoscroll while near bottom
   useEffect(() => {
@@ -55,9 +97,10 @@ export function ChatView(props: Props) {
 
   const send = () => {
     const t = input.trim();
-    if (!t || props.streaming) return;
-    props.onSend(t);
+    if ((!t && attachments.length === 0) || props.streaming) return;
+    props.onSend(t, attachments);
     setInput("");
+    setAttachments([]);
     requestAnimationFrame(() => {
       if (taRef.current) taRef.current.style.height = "auto";
     });
@@ -116,13 +159,32 @@ export function ChatView(props: Props) {
               </div>
             </div>
           ) : (
-            props.messages.map((m, i) => (
-              <MessageItem
-                key={m.id ?? `live-${i}`}
-                msg={m}
-                onOpenArtifact={props.onOpenArtifact}
-              />
-            ))
+            props.messages.map((m, i) => {
+              const lastAssistant =
+                m.role === "assistant" &&
+                i === props.messages.length - 1 &&
+                !m.streaming &&
+                !props.streaming;
+              return (
+                <MessageItem
+                  key={m.id ?? `live-${i}`}
+                  msg={m}
+                  onOpenArtifact={props.onOpenArtifact}
+                  sibling={m.id != null ? props.siblingMap[m.id] : undefined}
+                  onNavigate={
+                    m.id != null
+                      ? (dir) => props.onNavigate(m.id as number, dir)
+                      : undefined
+                  }
+                  onEdit={
+                    m.role === "user" && m.id != null && !props.streaming
+                      ? (text) => props.onEditMessage(m.id as number, text)
+                      : undefined
+                  }
+                  onRegenerate={lastAssistant ? props.onRegenerate : undefined}
+                />
+              );
+            })
           )}
         </div>
       </div>
@@ -135,7 +197,30 @@ export function ChatView(props: Props) {
               onResolve={props.onResolveTool}
             />
           )}
-          <div className="composer-box">
+          <div
+            className="composer-box"
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault();
+              if (e.dataTransfer.files.length) ingestFiles(e.dataTransfer.files);
+            }}
+          >
+            {attachments.length > 0 && (
+              <div className="attach-row">
+                {attachments.map((src, i) => (
+                  <div className="attach-thumb" key={i}>
+                    <img src={src} />
+                    <button
+                      onClick={() =>
+                        setAttachments((a) => a.filter((_, j) => j !== i))
+                      }
+                    >
+                      ✕
+                    </button>
+                  </div>
+                ))}
+              </div>
+            )}
             <textarea
               ref={taRef}
               rows={1}
@@ -145,6 +230,13 @@ export function ChatView(props: Props) {
                 setInput(e.target.value);
                 autoGrow();
               }}
+              onPaste={(e) => {
+                const files = Array.from(e.clipboardData.files);
+                if (files.length) {
+                  e.preventDefault();
+                  ingestFiles(files);
+                }
+              }}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey) {
                   e.preventDefault();
@@ -153,6 +245,23 @@ export function ChatView(props: Props) {
               }}
             />
             <div className="composer-row">
+              <input
+                ref={fileRef}
+                type="file"
+                multiple
+                style={{ display: "none" }}
+                onChange={(e) => {
+                  if (e.target.files) ingestFiles(e.target.files);
+                  e.target.value = "";
+                }}
+              />
+              <button
+                className="attach-btn"
+                title="Attach files"
+                onClick={() => fileRef.current?.click()}
+              >
+                ＋
+              </button>
               <span className="hint">{props.settings.model ?? "select a model"}</span>
               {props.streaming ? (
                 <button className="stop-btn" onClick={props.onStop}>
@@ -162,7 +271,10 @@ export function ChatView(props: Props) {
                 <button
                   className="send-btn"
                   onClick={send}
-                  disabled={!input.trim() || !props.settings.model}
+                  disabled={
+                    (!input.trim() && attachments.length === 0) ||
+                    !props.settings.model
+                  }
                 >
                   Send
                 </button>

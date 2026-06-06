@@ -5,7 +5,7 @@
 
 use crate::api::{self, ChatParams, StreamEvent};
 use crate::config::Config;
-use crate::message::{ContentPart, Message, Role, ToolCall};
+use crate::message::{ContentPart, ImageUrl, Message, Role, ToolCall};
 use crate::state::AppState;
 use crate::storage::ConversationSettings;
 use crate::tools::{self, Handler, Safety, ToolDef};
@@ -72,12 +72,12 @@ pub struct SettingsDto {
     pub working_dir: Option<String>,
 }
 
-/// Everything the frontend sends to start a generation. The API key is *not*
-/// here — it's resolved server-side from `config.saved_endpoints` so secrets
-/// never round-trip through JS.
-#[derive(Deserialize)]
-pub struct SendParams {
-    pub conversation_id: Option<i64>,
+/// Model + endpoint + sampling knobs shared by send/regenerate/edit. The API
+/// key is *not* here — it's resolved server-side from `config.saved_endpoints`
+/// so secrets never round-trip through JS. Flattened into the request structs
+/// so the JS payload stays a single flat object.
+#[derive(Deserialize, Clone)]
+pub struct GenParams {
     pub endpoint: String,
     pub model: String,
     pub system_prompt: String,
@@ -89,7 +89,34 @@ pub struct SendParams {
     pub presence_penalty: Option<f32>,
     #[serde(default)]
     pub stop_sequences: Vec<String>,
+}
+
+#[derive(Deserialize)]
+pub struct SendParams {
+    pub conversation_id: Option<i64>,
+    #[serde(flatten)]
+    pub gp: GenParams,
     pub user_text: String,
+    /// Image attachments as data/HTTP URLs, rendered into `image_url` content
+    /// parts on the user message.
+    #[serde(default)]
+    pub images: Vec<String>,
+}
+
+#[derive(Deserialize)]
+pub struct RegenerateParams {
+    pub conversation_id: i64,
+    #[serde(flatten)]
+    pub gp: GenParams,
+}
+
+#[derive(Deserialize)]
+pub struct EditParams {
+    pub conversation_id: i64,
+    pub message_id: i64,
+    pub new_text: String,
+    #[serde(flatten)]
+    pub gp: GenParams,
 }
 
 /// Streaming events pushed to the frontend over the per-request `Channel`.
@@ -311,70 +338,208 @@ pub fn resolve_tool(state: State<'_, AppState>, call_id: String, approved: bool)
     }
 }
 
+fn settings_from_gen(gp: &GenParams, working_dir: Option<String>) -> ConversationSettings {
+    ConversationSettings {
+        model: Some(gp.model.clone()),
+        system_prompt: Some(gp.system_prompt.clone()),
+        temperature: gp.temperature,
+        max_tokens: gp.max_tokens,
+        use_max_tokens: gp.use_max_tokens,
+        top_p: gp.top_p,
+        frequency_penalty: gp.frequency_penalty,
+        presence_penalty: gp.presence_penalty,
+        stop_sequences: gp.stop_sequences.clone(),
+        endpoint: Some(gp.endpoint.clone()),
+        working_dir,
+    }
+}
+
+fn resolve_wd(working_dir: Option<String>) -> PathBuf {
+    working_dir
+        .map(PathBuf::from)
+        .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")))
+}
+
 #[tauri::command]
 pub async fn send_message(
     state: State<'_, AppState>,
     params: SendParams,
     on_event: Channel<ChatEvent>,
 ) -> Result<i64, String> {
-    // --- synchronous setup (no await while locked) ---
-    let (conversation_id, mut messages, api_key, working_dir) = {
+    let (conversation_id, messages, api_key, working_dir, first_branch) = {
         let storage = state.storage.lock().unwrap();
-
         let conversation_id = match params.conversation_id {
             Some(id) => id,
             None => storage.create_conversation("New chat")?,
         };
-
-        // Existing active-path history (each carries its DB id).
         let mut messages = storage.load_messages(conversation_id);
-        messages.push(Message::text(Role::User, params.user_text.clone()));
+        let mut parts = vec![ContentPart::Text {
+            text: params.user_text.clone(),
+        }];
+        for url in &params.images {
+            parts.push(ContentPart::ImageUrl {
+                image_url: ImageUrl {
+                    url: url.clone(),
+                    detail: None,
+                },
+            });
+        }
+        messages.push(Message::from_parts(Role::User, parts));
 
-        let settings_to_save = ConversationSettings {
-            model: Some(params.model.clone()),
-            system_prompt: Some(params.system_prompt.clone()),
-            temperature: params.temperature,
-            max_tokens: params.max_tokens,
-            use_max_tokens: params.use_max_tokens,
-            top_p: params.top_p,
-            frequency_penalty: params.frequency_penalty,
-            presence_penalty: params.presence_penalty,
-            stop_sequences: params.stop_sequences.clone(),
-            endpoint: Some(params.endpoint.clone()),
-            working_dir: storage
-                .load_conversation_settings(conversation_id)
-                .working_dir,
-        };
-        let working_dir = settings_to_save
-            .working_dir
-            .clone()
-            .map(PathBuf::from)
-            .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")));
-
-        let api_key = {
-            let cfg = state.config.lock().unwrap();
-            cfg.saved_endpoints
-                .iter()
-                .find(|e| e.url == params.endpoint)
-                .and_then(|e| e.api_key.clone())
-        };
-
-        // Persist the user turn + settings up front.
+        let prior_wd = storage.load_conversation_settings(conversation_id).working_dir;
         storage.save_messages(conversation_id, &mut messages)?;
-        storage.save_conversation_settings(conversation_id, &settings_to_save);
+        storage.save_conversation_settings(
+            conversation_id,
+            &settings_from_gen(&params.gp, prior_wd.clone()),
+        );
 
-        (conversation_id, messages, api_key, working_dir)
+        let parent = messages.last().and_then(|m| m.id);
+        let first_branch = storage.next_branch_index(conversation_id, parent);
+        (
+            conversation_id,
+            messages,
+            state.api_key_for(&params.gp.endpoint),
+            resolve_wd(prior_wd),
+            first_branch,
+        )
     };
 
-    // Snapshot the loaded tools for this turn.
+    on_event.send(ChatEvent::Started { conversation_id }).ok();
+    let (final_id, errored) = run_turn(
+        &state, conversation_id, messages, &params.gp, api_key, working_dir, first_branch,
+        &on_event,
+    )
+    .await;
+    if !errored {
+        maybe_auto_title(&state, conversation_id, &params.gp, &params.user_text).await;
+    }
+    on_event
+        .send(ChatEvent::Done {
+            message_id: final_id,
+        })
+        .ok();
+    Ok(conversation_id)
+}
+
+/// Regenerate the last assistant turn as a new sibling branch under the same
+/// user message. The previous reply is kept on disk and reachable via the
+/// ◀ N/M ▶ navigator.
+#[tauri::command]
+pub async fn regenerate(
+    state: State<'_, AppState>,
+    params: RegenerateParams,
+    on_event: Channel<ChatEvent>,
+) -> Result<i64, String> {
+    let conversation_id = params.conversation_id;
+    let (messages, api_key, working_dir, first_branch) = {
+        let storage = state.storage.lock().unwrap();
+        let full = storage.load_messages(conversation_id);
+        let Some(idx) = full.iter().rposition(|m| m.role == Role::User) else {
+            return Err("Nothing to regenerate".into());
+        };
+        let messages: Vec<Message> = full[..=idx].to_vec();
+        let parent = messages.last().and_then(|m| m.id);
+        let first_branch = storage.next_branch_index(conversation_id, parent);
+        let prior_wd = storage.load_conversation_settings(conversation_id).working_dir;
+        storage.save_conversation_settings(
+            conversation_id,
+            &settings_from_gen(&params.gp, prior_wd.clone()),
+        );
+        (
+            messages,
+            state.api_key_for(&params.gp.endpoint),
+            resolve_wd(prior_wd),
+            first_branch,
+        )
+    };
+
+    on_event.send(ChatEvent::Started { conversation_id }).ok();
+    let (final_id, _) = run_turn(
+        &state, conversation_id, messages, &params.gp, api_key, working_dir, first_branch,
+        &on_event,
+    )
+    .await;
+    on_event
+        .send(ChatEvent::Done {
+            message_id: final_id,
+        })
+        .ok();
+    Ok(conversation_id)
+}
+
+/// Edit a (user) message and resend: the edited text becomes a new sibling
+/// under the original's parent, and a fresh assistant reply streams from there.
+#[tauri::command]
+pub async fn edit_message(
+    state: State<'_, AppState>,
+    params: EditParams,
+    on_event: Channel<ChatEvent>,
+) -> Result<i64, String> {
+    let conversation_id = params.conversation_id;
+    let (messages, api_key, working_dir) = {
+        let storage = state.storage.lock().unwrap();
+        let full = storage.load_messages(conversation_id);
+        let Some(idx) = full.iter().position(|m| m.id == Some(params.message_id)) else {
+            return Err("Message not found".into());
+        };
+        let original = &full[idx];
+        let parent = original.parent_id;
+        let branch = storage.next_branch_index(conversation_id, parent);
+
+        let mut messages: Vec<Message> = full[..idx].to_vec();
+        let mut edited = Message::text(original.role.clone(), params.new_text.clone());
+        edited.parent_id = parent;
+        edited.branch_index = branch;
+        messages.push(edited);
+
+        let prior_wd = storage.load_conversation_settings(conversation_id).working_dir;
+        storage.save_conversation_settings(
+            conversation_id,
+            &settings_from_gen(&params.gp, prior_wd.clone()),
+        );
+        storage.save_messages(conversation_id, &mut messages)?;
+        (
+            messages,
+            state.api_key_for(&params.gp.endpoint),
+            resolve_wd(prior_wd),
+        )
+    };
+
+    on_event.send(ChatEvent::Started { conversation_id }).ok();
+    // The assistant reply is the first child of the new user sibling → branch 0.
+    let (final_id, _) = run_turn(
+        &state, conversation_id, messages, &params.gp, api_key, working_dir, 0, &on_event,
+    )
+    .await;
+    on_event
+        .send(ChatEvent::Done {
+            message_id: final_id,
+        })
+        .ok();
+    Ok(conversation_id)
+}
+
+/// Drive one user turn through the tool loop: stream → persist assistant →
+/// execute tools → re-stream, up to `MAX_TOOL_ITERATIONS`. `messages` must
+/// already contain the persisted history + the triggering user message.
+/// Returns `(final_assistant_message_id, errored)`.
+#[allow(clippy::too_many_arguments)]
+async fn run_turn(
+    state: &State<'_, AppState>,
+    conversation_id: i64,
+    mut messages: Vec<Message>,
+    gp: &GenParams,
+    api_key: Option<String>,
+    working_dir: PathBuf,
+    first_assistant_branch_index: i64,
+    on_event: &Channel<ChatEvent>,
+) -> (Option<i64>, bool) {
     let tool_defs: Vec<ToolDef> = state.tools.lock().unwrap().clone();
     let tools_api = if tool_defs.is_empty() {
         None
     } else {
         Some(tools::to_api_shape(&tool_defs))
     };
-
-    on_event.send(ChatEvent::Started { conversation_id }).ok();
 
     let cancel = CancellationToken::new();
     *state.cancel.lock().unwrap() = Some(cancel.clone());
@@ -388,47 +553,43 @@ pub async fn send_message(
         }
         on_event.send(ChatEvent::TurnStart).ok();
 
-        // Build the wire payload: optional system prompt + full history so far.
         let mut wire = Vec::with_capacity(messages.len() + 1);
-        if !params.system_prompt.trim().is_empty() {
-            wire.push(Message::text(Role::System, params.system_prompt.clone()));
+        if !gp.system_prompt.trim().is_empty() {
+            wire.push(Message::text(Role::System, gp.system_prompt.clone()));
         }
         wire.extend(messages.iter().cloned());
 
-        let outcome = stream_once(
-            &params,
-            wire,
-            api_key.clone(),
-            tools_api.clone(),
-            cancel.clone(),
-            &on_event,
-        )
-        .await;
-
+        let outcome =
+            stream_once(gp, wire, api_key.clone(), tools_api.clone(), cancel.clone(), on_event)
+                .await;
         if outcome.errored {
             errored = true;
             break;
         }
 
-        // Persist the assistant turn (content + any reasoning + tool_calls).
         let stored = combine_stored(&outcome.reasoning, &outcome.content);
         let mut assistant = Message::text(Role::Assistant, stored);
+        if iteration == 0 {
+            assistant.branch_index = first_assistant_branch_index;
+        }
         if !outcome.tool_calls.is_empty() {
             assistant.tool_calls = Some(outcome.tool_calls.clone());
         }
         messages.push(assistant);
-        {
+        if let Err(e) = {
             let storage = state.storage.lock().unwrap();
-            storage.save_messages(conversation_id, &mut messages)?;
+            storage.save_messages(conversation_id, &mut messages)
+        } {
+            on_event.send(ChatEvent::Error { message: e }).ok();
+            errored = true;
+            break;
         }
         final_message_id = messages.last().and_then(|m| m.id);
 
-        // No tools requested, or we've hit the cap → end the turn.
         if outcome.tool_calls.is_empty() || iteration + 1 >= MAX_TOOL_ITERATIONS {
             break;
         }
 
-        // Execute each requested tool, appending a tool-result message.
         for call in &outcome.tool_calls {
             on_event
                 .send(ChatEvent::ToolCall {
@@ -444,9 +605,7 @@ pub async fn send_message(
                 Some(def) => {
                     let approved = match def.safety {
                         Safety::Auto => true,
-                        Safety::Confirm => {
-                            request_approval(&state, &on_event, call, &cancel).await
-                        }
+                        Safety::Confirm => request_approval(state, on_event, call, &cancel).await,
                     };
                     if !approved {
                         ("Tool call denied by user.".to_string(), true)
@@ -466,25 +625,59 @@ pub async fn send_message(
                 .ok();
             messages.push(Message::tool_result(call.id.clone(), result));
         }
-        {
+        if let Err(e) = {
             let storage = state.storage.lock().unwrap();
-            storage.save_messages(conversation_id, &mut messages)?;
+            storage.save_messages(conversation_id, &mut messages)
+        } {
+            on_event.send(ChatEvent::Error { message: e }).ok();
+            errored = true;
+            break;
         }
-        // loop continues → re-stream with the tool results in context
     }
 
     *state.cancel.lock().unwrap() = None;
+    (final_message_id, errored)
+}
 
-    if !errored {
-        maybe_auto_title(&state, conversation_id, &params).await;
+#[derive(Serialize)]
+pub struct SiblingInfo {
+    pub index: usize,
+    pub total: usize,
+    pub ids: Vec<i64>,
+}
+
+/// Sibling-branch info for the `◀ N/M ▶` navigator at a branch point.
+#[tauri::command]
+pub fn message_siblings(state: State<'_, AppState>, message_id: i64) -> SiblingInfo {
+    let ids: Vec<i64> = state
+        .storage
+        .lock()
+        .unwrap()
+        .siblings_of(message_id)
+        .into_iter()
+        .map(|h| h.id)
+        .collect();
+    let index = ids.iter().position(|&id| id == message_id).unwrap_or(0);
+    SiblingInfo {
+        total: ids.len(),
+        index,
+        ids,
     }
+}
 
-    on_event
-        .send(ChatEvent::Done {
-            message_id: final_message_id,
-        })
-        .ok();
-    Ok(conversation_id)
+/// Rebuild the active path suffix starting from `start_id` (the chosen sibling),
+/// picking the newest child at each fork. The frontend splices this onto the
+/// unchanged prefix before the branch point.
+#[tauri::command]
+pub fn walk_from(state: State<'_, AppState>, start_id: i64) -> Vec<MessageDto> {
+    state
+        .storage
+        .lock()
+        .unwrap()
+        .walk_from(start_id)
+        .iter()
+        .map(message_to_dto)
+        .collect()
 }
 
 /// Reasoning is persisted inline as a leading `<think>` block so it round-trips
@@ -507,7 +700,7 @@ struct StreamOutcome {
 /// Run one streaming completion, forwarding tokens/reasoning/usage/metrics to
 /// the frontend and returning the assembled result for the orchestration loop.
 async fn stream_once(
-    params: &SendParams,
+    gp: &GenParams,
     wire: Vec<Message>,
     api_key: Option<String>,
     tools: Option<Vec<serde_json::Value>>,
@@ -516,22 +709,22 @@ async fn stream_once(
 ) -> StreamOutcome {
     let (tx, mut rx) = mpsc::unbounded_channel::<StreamEvent>();
     let chat_params = ChatParams {
-        base_url: params.endpoint.clone(),
-        model: params.model.clone(),
+        base_url: gp.endpoint.clone(),
+        model: gp.model.clone(),
         messages: wire,
-        temperature: params.temperature,
-        max_tokens: if params.use_max_tokens {
-            params.max_tokens
+        temperature: gp.temperature,
+        max_tokens: if gp.use_max_tokens {
+            gp.max_tokens
         } else {
             None
         },
-        top_p: params.top_p,
-        frequency_penalty: params.frequency_penalty,
-        presence_penalty: params.presence_penalty,
-        stop_sequences: if params.stop_sequences.is_empty() {
+        top_p: gp.top_p,
+        frequency_penalty: gp.frequency_penalty,
+        presence_penalty: gp.presence_penalty,
+        stop_sequences: if gp.stop_sequences.is_empty() {
             None
         } else {
-            Some(params.stop_sequences.clone())
+            Some(gp.stop_sequences.clone())
         },
         api_key,
         tools,
@@ -664,7 +857,12 @@ async fn execute_tool(def: ToolDef, call: &ToolCall, wd: PathBuf) -> (String, bo
 }
 
 /// Generate a short title from the first exchange, once, in the background.
-async fn maybe_auto_title(state: &State<'_, AppState>, conversation_id: i64, params: &SendParams) {
+async fn maybe_auto_title(
+    state: &State<'_, AppState>,
+    conversation_id: i64,
+    gp: &GenParams,
+    user_text: &str,
+) {
     let needs = {
         let storage = state.storage.lock().unwrap();
         storage.needs_auto_title(conversation_id)
@@ -672,18 +870,18 @@ async fn maybe_auto_title(state: &State<'_, AppState>, conversation_id: i64, par
     if !needs {
         return;
     }
-    let api_key = state.api_key_for(&params.endpoint);
+    let api_key = state.api_key_for(&gp.endpoint);
     let prompt = vec![
         Message::text(
             Role::System,
             "Give a concise 3-6 word title for this conversation. Reply with only the title, no quotes."
                 .to_string(),
         ),
-        Message::text(Role::User, params.user_text.clone()),
+        Message::text(Role::User, user_text.to_string()),
     ];
     let title = api::complete_once(
-        &params.endpoint,
-        &params.model,
+        &gp.endpoint,
+        &gp.model,
         &prompt,
         api_key.as_deref(),
         Some(32),
