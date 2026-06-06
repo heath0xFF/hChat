@@ -20,7 +20,8 @@ Electron app.
 - **Multiple backends** at once — switch from the top bar; each conversation
   remembers its own. Arbitrary URLs/ports, per-endpoint API keys
 - **Live metrics dashboard** — decode/TTFT/prefill, requests, VRAM, power, temp,
-  KV-cache, and per-GPU rows, with throughput & TTFT charts. Apple-Silicon GPU
+  KV-cache, and per-GPU rows, with throughput, TTFT, and GPU util/power charts.
+  Apple-Silicon GPU
   stats via [macmon](https://github.com/vladkens/macmon) (no sudo); remote NVIDIA
   boxes via the bundled **`hchat-agent`**; vLLM / llama.cpp / llama-swap via
   Prometheus
@@ -31,6 +32,9 @@ Electron app.
 - **MCP** — connect to [Model Context Protocol](https://modelcontextprotocol.io)
   servers (stdio or streamable HTTP); their tools join the model's tool set
   automatically. Manage in Settings → MCP or `config.toml`
+- **Skills & commands** — drop-in [`~/.agents`](https://www.dot-agents.com/)
+  resources: `commands/` become slash commands, `skills/` are model- or
+  manually-invoked, shared with your other agents (user- and project-level)
 - **Artifacts panel** — renders the HTML (live, sandboxed iframe), SVG, Markdown,
   Mermaid diagrams, and code your models produce, with a preview/source toggle
 - **Branching** — regenerate or edit any message to fork a sibling; navigate
@@ -71,10 +75,8 @@ flowchart LR
   core -->|OpenAI API| or["OpenRouter / cloud"]
 
   core -.->|macmon| mac["Apple Silicon GPU<br/>power · temp · unified VRAM"]
-  core -.->|HTTP /gpu| agent["hchat-agent<br/>nvidia-smi + /proc/meminfo"]
+  core -.->|HTTP /gpu| agent["hchat-agent<br/>(runs on the Spark)<br/>nvidia-smi + /proc/meminfo"]
   core -.->|/metrics scrape| prom["Prometheus<br/>vLLM · llama.cpp · llama-swap"]
-
-  agent -.- vllm
 ```
 
 Solid arrows are chat traffic; dotted arrows are metrics. Per-request
@@ -112,6 +114,7 @@ npm run tauri dev    # run the app (hot reload)
 npm run tauri build  # produce a release bundle (.app / .dmg / .deb)
 ```
 
+There are no prebuilt binaries yet — build from source with the steps above.
 `npm run tauri dev` runs the app in development with hot reload — use this day to
 day. `npm run tauri build` compiles an optimized frontend (`vite build`) and a
 release Rust binary, then packages a **native installer for your platform** — a
@@ -171,9 +174,10 @@ but no model is loaded/pulled.
 
 ## Metrics dashboard
 
-The **Status** view shows live metrics for the active conversation's backend.
-Per-request decode/TTFT/prefill is always measured client-side; richer stats are
-opt-in per endpoint (set them in **Settings → Endpoints** or `config.toml`):
+The **Status** view shows live metrics for a backend you pick from its own
+endpoint dropdown (independent of the active chat). Per-request decode/TTFT/
+prefill is measured client-side; richer stats are opt-in per endpoint (set them
+in **Settings → Endpoints** or `config.toml`):
 
 ```toml
 # llama.cpp on this Mac (start it with `llama-server --metrics`)
@@ -285,7 +289,8 @@ or `~/.local/share/hchat/hchat.db` (Linux). API keys are sent as
 ## Tools
 
 Tool-capable models can call functions hChat exposes. Five defaults are seeded
-into `~/.config/hchat/tools/` on first launch:
+on first launch into hChat's tools dir — `~/Library/Application Support/hchat/tools/`
+on macOS, `~/.config/hchat/tools/` on Linux:
 
 | Tool | Safety | Description |
 |---|---|---|
@@ -300,7 +305,7 @@ Approve-all-in-this-conversation / Deny). Each conversation has its own
 `working_dir` that relative paths resolve against (defaults to home). Tool chains
 are capped at 8 cycles per turn.
 
-Define your own by dropping a `.toml` into `~/.config/hchat/tools/`:
+Define your own by dropping a `.toml` into that tools dir:
 
 ```toml
 name = "git_log"
@@ -314,7 +319,8 @@ handler = { shell = ["git", "log", "--oneline", "-n", "{{count}}"] }
 safety = "confirm"
 ```
 
-Restart to load new/edited tools.
+New and edited tools hot-reload — they take effect on your next message, no
+restart needed (same for the `~/.agents` resources below).
 
 ## Skills, commands & the `~/.agents` convention
 

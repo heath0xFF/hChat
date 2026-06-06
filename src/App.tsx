@@ -157,6 +157,8 @@ export function App() {
   const contentBuf = useRef("");
   const convIdRef = useRef<number | null>(null);
   const hotkeyRef = useRef<(e: KeyboardEvent) => void>(() => {});
+  const viewRef = useRef(view);
+  viewRef.current = view;
 
   const refreshConversations = useCallback(async () => {
     setConversations(await api.listConversations());
@@ -199,6 +201,10 @@ export function App() {
   // not only when we send a request).
   useEffect(() => {
     const un = listen<MetricsSnapshot>("metrics", (e) => {
+      // Only update metrics state while the Status view is visible — otherwise
+      // the ~1.5s poller would re-render the chat (and re-paint code blocks)
+      // every tick for no visible benefit.
+      if (viewRef.current !== "status") return;
       const snap = e.payload;
       setSnapshot(snap);
       const decode = snap.server?.decode_tok_s ?? null;
@@ -371,11 +377,15 @@ export function App() {
     return true;
   };
 
-  const openArtifact = (code: string, lang: string) => {
-    const match = artifacts.find((a) => a.code === code) ?? makeArtifact(code, lang);
-    setCurrentArtifact(match);
-    setArtifactOpen(true);
-  };
+  const openArtifact = useCallback(
+    (code: string, lang: string) => {
+      const match =
+        artifacts.find((a) => a.code === code) ?? makeArtifact(code, lang);
+      setCurrentArtifact(match);
+      setArtifactOpen(true);
+    },
+    [artifacts],
+  );
 
   const toggleArtifacts = () => {
     if (artifactOpen) {
