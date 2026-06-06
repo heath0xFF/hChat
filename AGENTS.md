@@ -1,6 +1,6 @@
-# hChat Agent Instructions
+# Fornax Agent Instructions
 
-hChat is a **Tauri** app (Rust backend + React/TS frontend) — a local-LLM
+Fornax is a **Tauri** app (Rust backend + React/TS frontend) — a local-LLM
 workstation: chat client + live inference-metrics dashboard + (planned) artifact
 rendering. It is mid-rewrite from the original Rust/egui app on the
 `rewrite-tauri` branch; **Phase A (chat parity) is complete**, Phase B (metrics)

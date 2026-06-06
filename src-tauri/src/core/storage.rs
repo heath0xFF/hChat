@@ -114,7 +114,7 @@ impl Storage {
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
             .ok();
         // Wait up to 5s for a lock instead of immediately returning SQLITE_BUSY.
-        // Without this, two hChat windows writing concurrently race and the
+        // Without this, two Fornax windows writing concurrently race and the
         // loser silently drops its write (we use `.ok()` on most calls).
         let _ = conn.busy_timeout(Duration::from_secs(5));
         let storage = Self { conn };
@@ -125,8 +125,8 @@ impl Storage {
     fn db_path() -> PathBuf {
         dirs::data_dir()
             .unwrap_or_else(|| PathBuf::from("."))
-            .join("hchat")
-            .join("hchat.db")
+            .join("fornax")
+            .join("fornax.db")
     }
 
     fn init_tables(&self) {
@@ -749,7 +749,7 @@ impl Storage {
     ///   the most recent `created_at`) and at each step pick the child with
     ///   the most recent `created_at`. Stops at a leaf.
     pub fn load_messages(&self, conversation_id: i64) -> Vec<Message> {
-        // Pull every row once, then walk in memory. The largest hChat
+        // Pull every row once, then walk in memory. The largest Fornax
         // conversation is going to have hundreds of messages, not millions.
         let rows = match self.fetch_all_message_rows(conversation_id) {
             Some(r) => r,
@@ -1954,12 +1954,12 @@ mod tests {
         let s = mem_storage();
         let conv = s.create_conversation("wd").unwrap();
         let original = ConversationSettings {
-            working_dir: Some("/Users/heath/code/hChat".into()),
+            working_dir: Some("/Users/heath/code/Fornax".into()),
             ..ConversationSettings::default()
         };
         s.save_conversation_settings(conv, &original);
         let loaded = s.load_conversation_settings(conv);
-        assert_eq!(loaded.working_dir.as_deref(), Some("/Users/heath/code/hChat"));
+        assert_eq!(loaded.working_dir.as_deref(), Some("/Users/heath/code/Fornax"));
     }
 
     #[test]

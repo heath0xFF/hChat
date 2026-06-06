@@ -2,7 +2,7 @@
 //!
 //! - **macmon** (Apple Silicon, no sudo): a dedicated OS thread owns the
 //!   non-`Send` `Sampler` and publishes the latest reading into a shared slot.
-//! - **agent**: poll a remote `hchat-agent` exposing nvidia-smi + /proc/meminfo
+//! - **agent**: poll a remote `fornax-agent` exposing nvidia-smi + /proc/meminfo
 //!   as JSON (used for the DGX Spark, where nvidia-smi can't report unified VRAM).
 
 use super::{GpuStats, LocalGpu};
@@ -66,7 +66,7 @@ pub fn spawn_macmon(shared: LocalGpu) {
 #[cfg(not(target_os = "macos"))]
 pub fn spawn_macmon(_shared: LocalGpu) {}
 
-/// Fetch GPU stats from a remote `hchat-agent`. The agent returns a JSON body
+/// Fetch GPU stats from a remote `fornax-agent`. The agent returns a JSON body
 /// matching `GpuStats` (minus `source`, which we stamp here).
 pub async fn fetch_agent(client: &reqwest::Client, base_url: &str) -> Option<GpuStats> {
     let url = format!("{}/gpu", base_url.trim_end_matches('/'));

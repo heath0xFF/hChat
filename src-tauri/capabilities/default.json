@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Default capability for the hChat main window",
+  "description": "Default capability for the Fornax main window",
   "windows": ["main"],
   "permissions": [
     "core:default",

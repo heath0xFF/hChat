@@ -1,5 +1,5 @@
 {
-  "name": "hchat",
+  "name": "fornax",
   "version": "0.10.0",
   "description": "Local LLM workstation — chat, live inference metrics, and artifact rendering",
   "type": "module",

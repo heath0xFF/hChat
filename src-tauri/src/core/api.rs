@@ -202,8 +202,8 @@ pub async fn fetch_models(base_url: &str, api_key: Option<&str>) -> Result<Vec<S
     }
     if is_openrouter {
         request = request
-            .header("HTTP-Referer", "https://github.com/hhheath/hChat")
-            .header("X-Title", "hChat");
+            .header("HTTP-Referer", "https://github.com/heath0xFF/fornax")
+            .header("X-Title", "Fornax");
     }
 
     // Track "200 with empty data" separately from "didn't respond at all" so
@@ -324,8 +324,8 @@ pub fn stream_chat(
         }
         if is_openrouter {
             request = request
-                .header("HTTP-Referer", "https://github.com/hhheath/hChat")
-                .header("X-Title", "hChat");
+                .header("HTTP-Referer", "https://github.com/heath0xFF/fornax")
+                .header("X-Title", "Fornax");
         }
 
         let resp = match request.send().await {
@@ -614,8 +614,8 @@ pub async fn complete_once(
     }
     if is_openrouter {
         request = request
-            .header("HTTP-Referer", "https://github.com/hhheath/hChat")
-            .header("X-Title", "hChat");
+            .header("HTTP-Referer", "https://github.com/heath0xFF/fornax")
+            .header("X-Title", "Fornax");
     }
 
     let resp = request

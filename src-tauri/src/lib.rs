@@ -26,8 +26,34 @@ mod state;
 use state::AppState;
 use tauri::Manager;
 
+/// One-time move of pre-rename data from the legacy `hchat` directories to
+/// `fornax`, so anyone upgrading keeps their conversations, config, and tools.
+/// Runs before any path is read; no-ops once the `fornax` dirs exist.
+fn migrate_legacy_dirs() {
+    use std::fs;
+    // config + tools live under config_dir; the SQLite db under data_dir.
+    // (these are the same directory on macOS, distinct on Linux.)
+    for base in [dirs::config_dir(), dirs::data_dir()].into_iter().flatten() {
+        let old = base.join("hchat");
+        let new = base.join("fornax");
+        if new.exists() || !old.exists() {
+            continue;
+        }
+        if fs::rename(&old, &new).is_ok() {
+            // Rename the db file (+ its WAL/SHM sidecars) to match the new name.
+            for ext in ["", "-wal", "-shm"] {
+                let from = new.join(format!("hchat.db{ext}"));
+                if from.exists() {
+                    let _ = fs::rename(&from, new.join(format!("fornax.db{ext}")));
+                }
+            }
+        }
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    migrate_legacy_dirs();
     tauri::Builder::default()
         .manage(AppState::new())
         .setup(|app| {

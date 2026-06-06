@@ -1,4 +1,4 @@
-//! Tool definitions and the loader that walks `~/.config/hchat/tools/`.
+//! Tool definitions and the loader that walks `~/.config/fornax/tools/`.
 //!
 //! A tool is described by a TOML file with at minimum `name`, `description`,
 //! `parameters` (JSON Schema, passed through to the API verbatim), and
@@ -63,11 +63,11 @@ pub enum Safety {
 }
 
 /// User config dir for tool TOMLs. `dirs::config_dir()` per platform plus
-/// the `hchat/tools/` subpath.
+/// the `fornax/tools/` subpath.
 pub fn user_tools_dir() -> PathBuf {
     dirs::config_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join("hchat")
+        .join("fornax")
         .join("tools")
 }
 
@@ -643,7 +643,7 @@ type = "object"
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0);
-        p.push(format!("hchat-tools-test-{pid}-{nonce}-{name}"));
+        p.push(format!("fornax-tools-test-{pid}-{nonce}-{name}"));
         std::fs::create_dir_all(&p).expect("mkdir tmp");
         p
     }

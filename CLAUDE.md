@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## What is hChat
+## What is Fornax
 
 A local-LLM **workstation** desktop app: chat client + live inference-metrics
 dashboard + (planned) artifact rendering. It connects to OpenAI-compatible

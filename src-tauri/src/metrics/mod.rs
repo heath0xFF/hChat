@@ -3,7 +3,7 @@
 //! sources every ~1.5s, and emits a `metrics` event to the frontend.
 //!
 //! Sources:
-//! - GPU/system: macmon (local Apple Silicon) or a remote `hchat-agent`.
+//! - GPU/system: macmon (local Apple Silicon) or a remote `fornax-agent`.
 //! - Server: Prometheus `/metrics` scrape (vLLM / llama.cpp).
 //! - Per-request decode/TTFT/prefill is measured client-side during streaming
 //!   (see `commands::stream_once`) and reported separately.

@@ -1,4 +1,4 @@
-# hChat
+# Fornax
 
 A local-LLM **workstation** for your desktop: a fast chat client, a live
 inference-metrics dashboard, an artifact-rendering panel, and per-request usage
@@ -23,7 +23,7 @@ Electron app.
   KV-cache, and per-GPU rows, with throughput, TTFT, and GPU util/power charts.
   Apple-Silicon GPU
   stats via [macmon](https://github.com/vladkens/macmon) (no sudo); remote NVIDIA
-  boxes via the bundled **`hchat-agent`**; vLLM / llama.cpp / llama-swap via
+  boxes via the bundled **`fornax-agent`**; vLLM / llama.cpp / llama-swap via
   Prometheus. View it full-page, or **dock it beside the chat** to watch a backend
   while you work
 - **Usage history** — every turn's tokens, cost, TTFT, and tok/s are recorded
@@ -37,7 +37,7 @@ Electron app.
 - **Native tool calling** — the model can read files, search code, run shell
   commands, and write into a working directory. Five tools ship pre-configured;
   destructive ones prompt for approval (with "approve all in this conversation").
-  Define your own as TOML in `~/.config/hchat/tools/`
+  Define your own as TOML in `~/.config/fornax/tools/`
 - **MCP** — connect to [Model Context Protocol](https://modelcontextprotocol.io)
   servers (stdio or streamable HTTP); their tools join the model's tool set
   automatically. Manage in Settings → MCP or `config.toml`
@@ -66,14 +66,14 @@ Electron app.
 
 ## How it works
 
-hChat is a thin, fast client. The Rust core makes OpenAI-compatible requests to
+Fornax is a thin, fast client. The Rust core makes OpenAI-compatible requests to
 whatever servers you point it at, measures each request as it streams, and polls
 each backend's metrics sources to populate the dashboard. Nothing leaves your
 machines unless you configure a cloud endpoint.
 
 ```mermaid
 flowchart LR
-  subgraph app["hChat desktop app (Tauri)"]
+  subgraph app["Fornax desktop app (Tauri)"]
     ui["React UI<br/>chat · dashboard · artifacts · usage · models · bench"]
     core["Rust core<br/>streaming · SQLite · tools · metrics poller"]
     ui <--> core
@@ -85,7 +85,7 @@ flowchart LR
   core -->|OpenAI API| or["OpenRouter / cloud"]
 
   core -.->|macmon| mac["Apple Silicon GPU<br/>power · temp · unified VRAM"]
-  core -.->|HTTP /gpu| agent["hchat-agent<br/>(runs on the Spark)<br/>nvidia-smi + /proc/meminfo"]
+  core -.->|HTTP /gpu| agent["fornax-agent<br/>(runs on the Spark)<br/>nvidia-smi + /proc/meminfo"]
   core -.->|/metrics scrape| prom["Prometheus<br/>vLLM · llama.cpp · llama-swap"]
 ```
 
@@ -115,8 +115,8 @@ server-wide throughput and GPU stats.
 ## Build & run
 
 ```bash
-git clone https://github.com/heath0xFF/hChat
-cd hChat
+git clone https://github.com/heath0xFF/fornax
+cd fornax
 
 npm install          # frontend deps + Tauri CLI
 npm run tauri dev    # run the app (hot reload)
@@ -130,42 +130,41 @@ day. `npm run tauri build` compiles an optimized frontend (`vite build`) and a
 release Rust binary, then packages a **native installer for your platform** — a
 `.app` + `.dmg` on macOS, a `.deb` / `.AppImage` / `.rpm` on Linux — under
 `src-tauri/target/release/bundle/`. The standalone binary is at
-`src-tauri/target/release/hchat` if you just want to copy that somewhere on your
+`src-tauri/target/release/fornax` if you just want to copy that somewhere on your
 `PATH`.
 
-## Migrating from a previous (Homebrew) install
+## Migrating from hChat
 
-hChat reads and writes the same files as the older version, so your
-conversations, settings, and custom tools carry over **automatically** — nothing
-to export or import:
+Fornax was previously called **hChat**. On first launch it **automatically
+migrates** your existing data — it moves the old `hchat` directories to `fornax`
+(renaming the database file too), so your conversations, settings, and custom
+tools carry over with nothing to export or import. The new locations are:
 
-- **Conversations** (SQLite): `~/Library/Application Support/hchat/hchat.db`
-  (macOS) · `~/.local/share/hchat/hchat.db` (Linux)
-- **Config**: `~/.config/hchat/config.toml`
-- **Custom tools**: the hChat config dir — `~/Library/Application Support/hchat/tools/`
-  (macOS) · `~/.config/hchat/tools/` (Linux)
+- **Conversations** (SQLite): `~/Library/Application Support/fornax/fornax.db`
+  (macOS) · `~/.local/share/fornax/fornax.db` (Linux)
+- **Config**: `~/.config/fornax/config.toml`
+- **Custom tools**: the Fornax config dir — `~/Library/Application Support/fornax/tools/`
+  (macOS) · `~/.config/fornax/tools/` (Linux)
 
-To switch over:
+The migration only runs when the `fornax` directories don't yet exist, so it
+never clobbers a fresh install. If you'd rather keep the old data untouched, back
+it up first:
 
 ```bash
-# 1. (optional) back up your database
-cp ~/Library/Application\ Support/hchat/hchat.db ~/hchat-backup.db
-
-# 2. remove the old Homebrew install
-brew uninstall --cask hchat   # if you installed the .app cask
-brew uninstall hchat          # if you installed the CLI binary
-
-# 3. build and run the new version (see "Build & run" above)
+cp -r ~/.config/hchat ~/hchat-config-backup
+cp -r ~/Library/Application\ Support/hchat ~/hchat-data-backup   # macOS
 ```
 
-On first launch hChat reads your existing `config.toml` — new fields (hotkeys,
-per-endpoint metrics) just take their defaults — and runs SQLite schema
-migrations in place, so older history upgrades without data loss. A corrupt
-config is backed up rather than overwritten.
+On first launch Fornax reads your existing `config.toml` — new fields just take
+their defaults — and runs SQLite schema migrations in place, so older history
+upgrades without data loss. A corrupt config is backed up rather than overwritten.
+
+If you installed the old Homebrew build, remove it: `brew uninstall --cask hchat`
+(or `brew uninstall hchat` for the CLI binary).
 
 ## Backends
 
-hChat is a client — point it at a running OpenAI-compatible server. Add endpoints
+Fornax is a client — point it at a running OpenAI-compatible server. Add endpoints
 in **Settings → Endpoints** (or in `config.toml`); switch from the top-bar
 dropdown.
 
@@ -179,7 +178,7 @@ dropdown.
 | **LM Studio** | `http://localhost:1234/v1` | load a model + start the server |
 | **Ollama** | `http://localhost:11434/v1` | `ollama pull <model>` first |
 
-If hChat reaches an endpoint but reports "No models available", the server is up
+If Fornax reaches an endpoint but reports "No models available", the server is up
 but no model is loaded/pulled.
 
 ## Metrics dashboard
@@ -215,10 +214,10 @@ agent_url = "http://spark:9099"
   Local endpoints on macOS default to `macmon` automatically, so VRAM/power/temp
   show up with no config
 
-### The metrics agent (`hchat-agent`)
+### The metrics agent (`fornax-agent`)
 
 `nvidia-smi` can't report VRAM on a GB10 / DGX Spark — CPU and GPU share unified
-LPDDR5X, so memory shows as `[Not Supported]`. The bundled **`hchat-agent`** reads
+LPDDR5X, so memory shows as `[Not Supported]`. The bundled **`fornax-agent`** reads
 `nvidia-smi` (power/temp/util) *and* `/proc/meminfo` (unified VRAM) and serves them
 as JSON. It's a single zero-dependency Rust binary (~450 KB) and is independent of
 your inference server — it works the same whether the box runs vLLM, llama.cpp, or
@@ -236,9 +235,9 @@ curl -s http://localhost:8000/metrics | head    # on the box
 **2. Build the agent on the box** (needs the Rust toolchain and `nvidia-smi`):
 
 ```bash
-git clone https://github.com/heath0xFF/hChat && cd hChat/agent
+git clone https://github.com/heath0xFF/fornax && cd fornax/agent
 cargo build --release
-sudo install -m755 target/release/hchat-agent /usr/local/bin/hchat-agent
+sudo install -m755 target/release/fornax-agent /usr/local/bin/fornax-agent
 ```
 
 > Prefer not to install Rust on the box? Cross-compile from another Linux machine
@@ -248,18 +247,18 @@ sudo install -m755 target/release/hchat-agent /usr/local/bin/hchat-agent
 **3. Run it** — foreground to test, or as a service to persist:
 
 ```bash
-hchat-agent --port 9099            # serves GET /gpu (binds 0.0.0.0 by default)
+fornax-agent --port 9099            # serves GET /gpu (binds 0.0.0.0 by default)
 curl -s http://localhost:9099/gpu  # sanity check — JSON with VRAM/power/temp
 ```
 
 ```ini
-# /etc/systemd/system/hchat-agent.service
+# /etc/systemd/system/fornax-agent.service
 [Unit]
-Description=hChat GPU metrics agent
+Description=Fornax GPU metrics agent
 After=network.target
 
 [Service]
-ExecStart=/usr/local/bin/hchat-agent --port 9099
+ExecStart=/usr/local/bin/fornax-agent --port 9099
 Restart=on-failure
 User=YOUR_USER
 
@@ -268,7 +267,7 @@ WantedBy=multi-user.target
 ```
 
 ```bash
-sudo systemctl daemon-reload && sudo systemctl enable --now hchat-agent
+sudo systemctl daemon-reload && sudo systemctl enable --now fornax-agent
 ```
 
 **4. Reach it from your Mac.**
@@ -276,7 +275,7 @@ sudo systemctl daemon-reload && sudo systemctl enable --now hchat-agent
 - **Same network:** use the box's hostname/IP (`agent_url = "http://host:9099"`,
   `prometheus_url = "http://host:8000/metrics"`); if it has a firewall, allow
   ports `9099` and the server's metrics port.
-- **Not on the same network:** SSH-tunnel and point hChat at `localhost`:
+- **Not on the same network:** SSH-tunnel and point Fornax at `localhost`:
   ```bash
   ssh -N -L 9099:localhost:9099 -L 8000:localhost:8000 you@host
   ```
@@ -319,7 +318,7 @@ what they have loaded). Click any model to point the current chat at that endpoi
 The **Benchmark** tab (the `Live | Benchmark` toggle on the Status page) load-tests
 an endpoint so you can compare models or tune concurrency. Pick an endpoint +
 model, set the **concurrency**, **request count**, and **max tokens**, and hit
-**Run** — hChat fires that many completions (capped to the concurrency in flight)
+**Run** — Fornax fires that many completions (capped to the concurrency in flight)
 and reports:
 
 - **Aggregate throughput** — total completion tokens ÷ wall-clock time
@@ -335,7 +334,7 @@ per request.
 
 Two layers:
 
-- **Global defaults** — `~/.config/hchat/config.toml`: default endpoint, system
+- **Global defaults** — `~/.config/fornax/config.toml`: default endpoint, system
   prompt, sampling params, appearance, hotkeys, usage retention, and saved
   endpoints (with optional keys + metrics config). Edit directly or use
   **Settings** (Cmd/Ctrl+,). See
@@ -345,15 +344,15 @@ Two layers:
   the model/temperature inside a chat affects only that chat. Save a bundle as a
   **preset** to reuse it.
 
-Conversation data lives in `~/Library/Application Support/hchat/hchat.db` (macOS)
-or `~/.local/share/hchat/hchat.db` (Linux). API keys are sent as
+Conversation data lives in `~/Library/Application Support/fornax/fornax.db` (macOS)
+or `~/.local/share/fornax/fornax.db` (Linux). API keys are sent as
 `Authorization: Bearer`; endpoints that don't need auth omit the key.
 
 ## Tools
 
-Tool-capable models can call functions hChat exposes. Five defaults are seeded
-on first launch into hChat's tools dir — `~/Library/Application Support/hchat/tools/`
-on macOS, `~/.config/hchat/tools/` on Linux:
+Tool-capable models can call functions Fornax exposes. Five defaults are seeded
+on first launch into Fornax's tools dir — `~/Library/Application Support/fornax/tools/`
+on macOS, `~/.config/fornax/tools/` on Linux:
 
 | Tool | Safety | Description |
 |---|---|---|
@@ -387,7 +386,7 @@ restart needed (same for the `~/.agents` resources below).
 
 ## Skills, commands & the `~/.agents` convention
 
-hChat also discovers portable [dot-agents](https://www.dot-agents.com/)-style
+Fornax also discovers portable [dot-agents](https://www.dot-agents.com/)-style
 resources, so commands, skills, and tools you've set up for other agents work
 here too. It scans, in increasing precedence:
 
@@ -435,7 +434,7 @@ conversation's working directory) override your user-level ones by name.
 
 ## MCP servers
 
-hChat is an [MCP](https://modelcontextprotocol.io) client: connect to MCP servers
+Fornax is an [MCP](https://modelcontextprotocol.io) client: connect to MCP servers
 and their tools join the model's tool set (namespaced `mcp_<server>_<tool>`),
 called and approved like any other tool. Configure in **Settings → MCP** (with
 live connection status + tool counts) or in `config.toml`:

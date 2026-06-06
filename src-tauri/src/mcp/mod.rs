@@ -312,12 +312,12 @@ mod tests {
         let (text, is_err) = mgr
             .call(
                 "mcp_everything_echo",
-                serde_json::json!({ "message": "hi from hChat" }),
+                serde_json::json!({ "message": "hi from Fornax" }),
             )
             .await;
         eprintln!("echo -> is_err={is_err} text={text}");
         assert!(!is_err, "echo errored: {text}");
-        assert!(text.contains("hi from hChat"));
+        assert!(text.contains("hi from Fornax"));
     }
 
     // Needs a running streamable-HTTP MCP server, e.g.:

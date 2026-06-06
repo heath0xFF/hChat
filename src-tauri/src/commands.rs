@@ -770,7 +770,7 @@ pub fn export_conversation_file(state: State<'_, AppState>, id: i64) -> Result<S
         .collect();
     let safe = safe.trim_matches('-');
     let name = if safe.is_empty() {
-        format!("hchat-{id}")
+        format!("fornax-{id}")
     } else {
         safe.to_string()
     };

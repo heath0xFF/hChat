@@ -7,7 +7,7 @@
 //! ~/.agents/
 //!   commands/<name>.md            # → a /command; body is a prompt template
 //!   skills/<name>/SKILL.md        # frontmatter (name, description) + instructions
-//!   tools/<name>.toml             # same format as hChat's own tools
+//!   tools/<name>.toml             # same format as Fornax's own tools
 //!   local/…                       # machine-specific overrides (same shape)
 //! <working_dir>/.agents/…         # project-local, overrides user-level
 //! ```
@@ -209,7 +209,7 @@ mod tests {
 
     #[test]
     fn loads_project_local_commands_skills_tools() {
-        let base = std::env::temp_dir().join(format!("hchat-agents-{}", std::process::id()));
+        let base = std::env::temp_dir().join(format!("fornax-agents-{}", std::process::id()));
         let a = base.join(".agents");
         std::fs::create_dir_all(a.join("commands")).unwrap();
         std::fs::create_dir_all(a.join("skills").join("code-review")).unwrap();

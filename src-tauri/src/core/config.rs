@@ -39,7 +39,7 @@ pub enum GpuKind {
     None,
     /// Local Apple Silicon GPU via the macmon sampler (no sudo).
     Macmon,
-    /// A remote `hchat-agent` exposing nvidia-smi + /proc/meminfo over HTTP.
+    /// A remote `fornax-agent` exposing nvidia-smi + /proc/meminfo over HTTP.
     Agent,
 }
 
@@ -64,7 +64,7 @@ pub struct Endpoint {
     /// GPU metrics source for this endpoint's host.
     #[serde(default, skip_serializing_if = "gpu_is_default")]
     pub gpu: GpuKind,
-    /// `hchat-agent` base URL when `gpu = agent` (e.g. http://spark:9099).
+    /// `fornax-agent` base URL when `gpu = agent` (e.g. http://spark:9099).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_url: Option<String>,
 }
@@ -161,7 +161,7 @@ fn default_true() -> bool {
     true
 }
 
-/// An MCP server hChat connects to. `transport = "stdio"` spawns `command`
+/// An MCP server Fornax connects to. `transport = "stdio"` spawns `command`
 /// (with `args`/`env`); `transport = "http"` connects to `url` (with `headers`).
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct McpServer {
@@ -248,7 +248,7 @@ impl Default for Config {
 impl Config {
     pub fn path() -> Result<PathBuf, String> {
         dirs::home_dir()
-            .map(|h| h.join(".config/hchat/config.toml"))
+            .map(|h| h.join(".config/fornax/config.toml"))
             .ok_or_else(|| "Could not determine home directory".to_string())
     }
 

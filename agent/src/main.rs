@@ -1,7 +1,7 @@
-//! hChat metrics agent — a dependency-free GPU-stats exporter.
+//! Fornax metrics agent — a dependency-free GPU-stats exporter.
 //!
-//! Run it on an NVIDIA box (e.g. a DGX Spark) and point an hChat endpoint at it
-//! (`gpu = "agent"`, `agent_url = "http://<host>:9099"`). hChat polls `GET /gpu`
+//! Run it on an NVIDIA box (e.g. a DGX Spark) and point a Fornax endpoint at it
+//! (`gpu = "agent"`, `agent_url = "http://<host>:9099"`). Fornax polls `GET /gpu`
 //! and renders the result on the Status dashboard.
 //!
 //! Why both nvidia-smi *and* /proc/meminfo: on GB10 / DGX Spark, nvidia-smi
@@ -9,7 +9,7 @@
 //! LPDDR5X. So power/temp/util come from nvidia-smi, and VRAM (used/total)
 //! comes from /proc/meminfo — the same approach vllm-studio uses for Jetson.
 //!
-//! Usage:  hchat-agent [--port 9099] [--bind 0.0.0.0]
+//! Usage:  fornax-agent [--port 9099] [--bind 0.0.0.0]
 
 use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
@@ -32,7 +32,7 @@ fn main() {
                 }
             }
             "-h" | "--help" => {
-                println!("hchat-agent [--port 9099] [--bind 0.0.0.0]");
+                println!("fornax-agent [--port 9099] [--bind 0.0.0.0]");
                 return;
             }
             _ => {}
@@ -43,11 +43,11 @@ fn main() {
     let listener = match TcpListener::bind(&addr) {
         Ok(l) => l,
         Err(e) => {
-            eprintln!("hchat-agent: cannot bind {addr}: {e}");
+            eprintln!("fornax-agent: cannot bind {addr}: {e}");
             std::process::exit(1);
         }
     };
-    println!("hchat-agent listening on http://{addr}  (GET /gpu)");
+    println!("fornax-agent listening on http://{addr}  (GET /gpu)");
 
     for stream in listener.incoming() {
         match stream {
@@ -55,7 +55,7 @@ fn main() {
                 // One request per connection; ignore handler errors.
                 let _ = handle(s);
             }
-            Err(e) => eprintln!("hchat-agent: accept error: {e}"),
+            Err(e) => eprintln!("fornax-agent: accept error: {e}"),
         }
     }
 }

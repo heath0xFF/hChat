@@ -1,8 +1,8 @@
 # MCP support — implementation plan (`feat/mcp`)
 
 Add [Model Context Protocol](https://modelcontextprotocol.io) client support so
-hChat can connect to MCP servers, discover their tools, and expose those tools to
-the model alongside hChat's native and `~/.agents` tools. Resources/prompts are a
+Fornax can connect to MCP servers, discover their tools, and expose those tools to
+the model alongside Fornax's native and `~/.agents` tools. Resources/prompts are a
 later phase.
 
 ## Tech
