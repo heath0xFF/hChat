@@ -26,10 +26,14 @@ Electron app.
   boxes via the bundled **`hchat-agent`**; vLLM / llama.cpp / llama-swap via
   Prometheus. View it full-page, or **dock it beside the chat** to watch a backend
   while you work
-- **Usage history** — every turn's tokens, TTFT, and tok/s are recorded locally;
-  the **Usage** page totals them with a by-model breakdown and a tokens-by-day
-  chart. Optional retention window (`usage_retention_days`); your data only, never
-  uploaded
+- **Usage history** — every turn's tokens, cost, TTFT, and tok/s are recorded
+  locally; the **Usage** page totals them with cost, TTFT/decode p50·p95, a
+  by-model breakdown, and a tokens-by-day chart. Optional retention window
+  (`usage_retention_days`); your data only, never uploaded
+- **Models browser** — one page listing the models available across every saved
+  endpoint; click one to start chatting with it
+- **Benchmark** — load-test any endpoint (set concurrency + request count) and get
+  aggregate throughput, TTFT/decode p50·p95, and per-request charts
 - **Native tool calling** — the model can read files, search code, run shell
   commands, and write into a working directory. Five tools ship pre-configured;
   destructive ones prompt for approval (with "approve all in this conversation").
@@ -70,7 +74,7 @@ machines unless you configure a cloud endpoint.
 ```mermaid
 flowchart LR
   subgraph app["hChat desktop app (Tauri)"]
-    ui["React UI<br/>chat · dashboard · artifacts · usage"]
+    ui["React UI<br/>chat · dashboard · artifacts · usage · models · bench"]
     core["Rust core<br/>streaming · SQLite · tools · metrics poller"]
     ui <--> core
   end
@@ -184,8 +188,9 @@ The **Status** view shows live metrics for a backend you pick from its own
 endpoint dropdown (independent of the active chat). Open it full-page from the
 left rail, or hit the **⚡** button in the chat top bar to **dock it on the right**
 as a tab next to Artifacts — so you can watch decode tok/s, GPU power, and VRAM
-while a model is replying. Per-request decode/TTFT/prefill is measured
-client-side; richer stats are opt-in per endpoint (set them in
+while a model is replying. A **Live | Benchmark** toggle at the top switches to a
+load-tester (see [Benchmark](#benchmark) below). Per-request decode/TTFT/prefill
+is measured client-side; richer stats are opt-in per endpoint (set them in
 **Settings → Endpoints** or `config.toml`):
 
 ```toml
@@ -281,11 +286,13 @@ sudo systemctl daemon-reload && sudo systemctl enable --now hchat-agent
 ## Usage history
 
 Every completed turn is recorded to a local SQLite table — endpoint, model,
-prompt/completion tokens, TTFT, and decode tok/s (tool-loop continuations each
-count as their own turn). The **Usage** page in the left rail aggregates it:
+prompt/completion tokens, cost, TTFT, and decode tok/s (tool-loop continuations
+each count as their own turn). The **Usage** page in the left rail aggregates it:
 
-- **Totals** — tokens, requests, prompt vs. completion, and success rate
-- **By model** — requests, tokens, average TTFT and tok/s per model + endpoint
+- **Totals** — tokens, requests, prompt vs. completion, success rate, and total
+  cost (shown only when a provider reports it, e.g. OpenRouter)
+- **Latency** — TTFT and decode p50·p95 across all recorded turns
+- **By model** — requests, tokens, cost, average TTFT and tok/s per model + endpoint
 - **Tokens by day** — a daily chart of total token throughput
 
 It's your data only and never leaves your machine. **Refresh** re-reads it;
@@ -298,6 +305,31 @@ automatically (on startup and whenever the Usage page loads) via
 ```toml
 usage_retention_days = 90   # delete usage older than 90 days; 0 = keep forever
 ```
+
+## Models
+
+The **Models** page lists the models each saved endpoint currently serves —
+fetched live from every backend's `/v1/models` in parallel, with a per-endpoint
+loading/error/empty state (so you can see at a glance which servers are up and
+what they have loaded). Click any model to point the current chat at that endpoint
++ model and drop straight into the conversation.
+
+## Benchmark
+
+The **Benchmark** tab (the `Live | Benchmark` toggle on the Status page) load-tests
+an endpoint so you can compare models or tune concurrency. Pick an endpoint +
+model, set the **concurrency**, **request count**, and **max tokens**, and hit
+**Run** — hChat fires that many completions (capped to the concurrency in flight)
+and reports:
+
+- **Aggregate throughput** — total completion tokens ÷ wall-clock time
+- **TTFT** and **decode tok/s** — p50 and p95 across the run
+- **OK / errors**, total wall time, and total tokens
+- **Per-request charts** for TTFT and decode
+
+Throughput/decode numbers need the server to report token usage (vLLM, llama.cpp,
+oMLX, OpenRouter all do). Limits: up to 64 concurrent, 500 requests, 4096 tokens
+per request.
 
 ## Configuration
 

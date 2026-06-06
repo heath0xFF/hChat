@@ -86,6 +86,7 @@ export interface UsageByModel {
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
+  cost: number;
   avg_ttft_ms: number | null;
   avg_decode_tok_s: number | null;
 }
@@ -95,12 +96,45 @@ export interface UsageDaily {
   total_tokens: number;
 }
 
+export interface BenchParams {
+  endpoint: string;
+  model: string;
+  prompt: string;
+  max_tokens: number;
+  concurrency: number;
+  total_requests: number;
+}
+
+export interface BenchAgg {
+  avg: number | null;
+  p50: number | null;
+  p95: number | null;
+}
+
+export interface BenchResult {
+  requests: number;
+  ok: number;
+  errors: number;
+  wall_ms: number;
+  ttft_ms: BenchAgg;
+  decode_tok_s: BenchAgg;
+  agg_decode_tok_s: number;
+  total_completion_tokens: number;
+  ttft_series: number[];
+  decode_series: number[];
+}
+
 export interface UsageStats {
   total_requests: number;
   ok_requests: number;
   prompt_tokens: number;
   completion_tokens: number;
   total_tokens: number;
+  total_cost: number;
+  ttft_p50_ms: number | null;
+  ttft_p95_ms: number | null;
+  decode_p50_tok_s: number | null;
+  decode_p95_tok_s: number | null;
   by_model: UsageByModel[];
   daily: UsageDaily[];
 }

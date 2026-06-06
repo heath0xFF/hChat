@@ -1,7 +1,7 @@
 import { useState } from "react";
 import type { ConversationDto, ProjectDto } from "../types";
 
-export type View = "status" | "usage" | "chat";
+export type View = "status" | "usage" | "models" | "chat";
 
 interface Props {
   view: View;
@@ -26,6 +26,7 @@ interface Props {
 const NAV: { key: View; label: string; ico: string }[] = [
   { key: "status", label: "Status", ico: "▤" },
   { key: "usage", label: "Usage", ico: "◷" },
+  { key: "models", label: "Models", ico: "◇" },
   { key: "chat", label: "Chat", ico: "✦" },
 ];
 

@@ -13,6 +13,8 @@ import type {
   SendParams,
   SiblingInfo,
   UsageStats,
+  BenchParams,
+  BenchResult,
 } from "../types";
 
 export const api = {
@@ -33,6 +35,8 @@ export const api = {
 
   usageStats: () => invoke<UsageStats>("usage_stats"),
   clearUsage: () => invoke<void>("clear_usage"),
+  runBenchmark: (params: BenchParams) =>
+    invoke<BenchResult>("run_benchmark", { params }),
   listProjects: () => invoke<ProjectDto[]>("list_projects"),
   createProject: (name: string) => invoke<number>("create_project", { name }),
   renameProject: (id: number, name: string) =>

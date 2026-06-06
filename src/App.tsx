@@ -19,6 +19,7 @@ import { Sidebar, type View } from "./components/Sidebar";
 import { ChatView } from "./components/ChatView";
 import { StatusView, type LiveMetrics } from "./components/StatusView";
 import { UsageView } from "./components/UsageView";
+import { ModelsView } from "./components/ModelsView";
 import { SettingsModal } from "./components/SettingsModal";
 import { ArtifactPanel } from "./components/ArtifactPanel";
 import { RightDock, type DockTab } from "./components/RightDock";
@@ -459,6 +460,14 @@ export function App() {
     setSettings((prev) => (prev ? { ...prev, endpoint } : prev));
     const m = await loadModels(endpoint);
     setSettings((prev) => (prev ? { ...prev, model: m[0] ?? prev.model } : prev));
+  };
+
+  // From the Models page: point the current chat at this endpoint + model and
+  // jump to the conversation.
+  const useModel = (endpoint: string, model: string) => {
+    setSettings((prev) => (prev ? { ...prev, endpoint, model } : prev));
+    void loadModels(endpoint);
+    setView("chat");
   };
 
   // Mutate the most recent assistant message (the one currently streaming).
@@ -929,6 +938,13 @@ export function App() {
           />
         ) : view === "usage" ? (
           <UsageView />
+        ) : view === "models" ? (
+          <ModelsView
+            endpoints={config.saved_endpoints}
+            activeEndpoint={settings.endpoint}
+            activeModel={settings.model}
+            onUseModel={useModel}
+          />
         ) : (
           <ChatView
             config={config}
@@ -978,6 +994,7 @@ export function App() {
           artifactCount={artifacts.length}
           status={
             <StatusView
+              embedded
               endpoints={config.saved_endpoints.map((e) => e.url)}
               endpoint={statusEndpoint}
               liveEndpoint={settings.endpoint}

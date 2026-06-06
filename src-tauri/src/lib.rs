@@ -65,6 +65,7 @@ pub fn run() {
             commands::set_pinned,
             commands::usage_stats,
             commands::clear_usage,
+            commands::run_benchmark,
             commands::list_projects,
             commands::create_project,
             commands::rename_project,

@@ -1,5 +1,7 @@
+import { useState } from "react";
 import type { MetricsSnapshot } from "../types";
 import { Chart } from "./Chart";
+import { BenchView } from "./BenchView";
 
 export interface LiveMetrics {
   decode: number | null;
@@ -29,6 +31,9 @@ interface Props {
   onChangeEndpoint: (endpoint: string) => void;
   metrics: LiveMetrics;
   snapshot: MetricsSnapshot | null;
+  /** True when rendered inside the right dock — hides the Benchmark mode,
+   *  which needs the full-page width. */
+  embedded?: boolean;
 }
 
 function fmt(n: number | null | undefined, digits = 1): string {
@@ -51,7 +56,9 @@ export function StatusView({
   onChangeEndpoint,
   metrics,
   snapshot,
+  embedded,
 }: Props) {
+  const [mode, setMode] = useState<"live" | "benchmark">("live");
   const m = metrics;
   const server = snapshot?.server ?? null;
   const gpu = snapshot?.gpu ?? null;
@@ -65,8 +72,35 @@ export function StatusView({
   const running = server?.requests_running ?? (isLive ? m.activeRequests : 0);
   const waiting = server?.requests_waiting ?? 0;
 
+  if (!embedded && mode === "benchmark") {
+    return (
+      <div className="status">
+        <div className="seg status-mode">
+          <button onClick={() => setMode("live")}>Live</button>
+          <button className="on" onClick={() => setMode("benchmark")}>
+            Benchmark
+          </button>
+        </div>
+        <BenchView endpoints={endpoints} defaultEndpoint={endpoint} />
+      </div>
+    );
+  }
+
   return (
     <div className="status">
+      {!embedded && (
+        <div className="seg status-mode">
+          <button className={mode === "live" ? "on" : ""} onClick={() => setMode("live")}>
+            Live
+          </button>
+          <button
+            className={mode === "benchmark" ? "on" : ""}
+            onClick={() => setMode("benchmark")}
+          >
+            Benchmark
+          </button>
+        </div>
+      )}
       <div style={{ display: "flex", alignItems: "center", gap: 12, margin: "8px 0 6px" }}>
         {snapshot?.runtime && <span className="badge dot">{snapshot.runtime}</span>}
         <select

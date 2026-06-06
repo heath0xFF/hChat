@@ -29,6 +29,12 @@ pub struct UsageStats {
     pub prompt_tokens: i64,
     pub completion_tokens: i64,
     pub total_tokens: i64,
+    pub total_cost: f64,
+    /// Latency/throughput percentiles across all recorded turns.
+    pub ttft_p50_ms: Option<f64>,
+    pub ttft_p95_ms: Option<f64>,
+    pub decode_p50_tok_s: Option<f64>,
+    pub decode_p95_tok_s: Option<f64>,
     pub by_model: Vec<UsageByModel>,
     pub daily: Vec<UsageDaily>,
 }
@@ -40,6 +46,7 @@ pub struct UsageByModel {
     pub prompt_tokens: i64,
     pub completion_tokens: i64,
     pub total_tokens: i64,
+    pub cost: f64,
     pub avg_ttft_ms: Option<f64>,
     pub avg_decode_tok_s: Option<f64>,
 }
@@ -57,6 +64,7 @@ pub struct UsageRecord<'a> {
     pub completion_tokens: Option<u32>,
     pub ttft_ms: Option<f64>,
     pub decode_tok_s: Option<f64>,
+    pub cost: Option<f64>,
     pub ok: bool,
 }
 
@@ -168,6 +176,7 @@ impl Storage {
                     completion_tokens INTEGER NOT NULL DEFAULT 0,
                     ttft_ms REAL,
                     decode_tok_s REAL,
+                    cost REAL,
                     ok INTEGER NOT NULL DEFAULT 1
                 );",
             )
@@ -244,6 +253,9 @@ impl Storage {
             ("endpoint", "TEXT"),
         ];
 
+        // Usage gained a `cost` column after the table first shipped.
+        const USAGE_COLS: &[(&str, &str)] = &[("cost", "REAL")];
+
         for (col, ty) in CONV_COLS {
             self.add_column_if_missing("conversations", col, ty);
         }
@@ -252,6 +264,9 @@ impl Storage {
         }
         for (col, ty) in PRESET_COLS {
             self.add_column_if_missing("presets", col, ty);
+        }
+        for (col, ty) in USAGE_COLS {
+            self.add_column_if_missing("usage", col, ty);
         }
     }
 
@@ -303,8 +318,8 @@ impl Storage {
         self.conn
             .execute(
                 "INSERT INTO usage \
-                 (endpoint, model, prompt_tokens, completion_tokens, ttft_ms, decode_tok_s, ok) \
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                 (endpoint, model, prompt_tokens, completion_tokens, ttft_ms, decode_tok_s, cost, ok) \
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                 params![
                     r.endpoint,
                     r.model,
@@ -312,6 +327,7 @@ impl Storage {
                     r.completion_tokens.unwrap_or(0),
                     r.ttft_ms,
                     r.decode_tok_s,
+                    r.cost,
                     r.ok as i64,
                 ],
             )
@@ -327,7 +343,8 @@ impl Storage {
             "SELECT COUNT(*), \
                     COALESCE(SUM(ok), 0), \
                     COALESCE(SUM(prompt_tokens), 0), \
-                    COALESCE(SUM(completion_tokens), 0) \
+                    COALESCE(SUM(completion_tokens), 0), \
+                    COALESCE(SUM(cost), 0) \
              FROM usage",
             [],
             |r| {
@@ -336,6 +353,7 @@ impl Storage {
                     r.get::<_, i64>(1)?,
                     r.get::<_, i64>(2)?,
                     r.get::<_, i64>(3)?,
+                    r.get::<_, f64>(4)?,
                 ))
             },
         ) {
@@ -344,12 +362,21 @@ impl Storage {
             stats.prompt_tokens = row.2;
             stats.completion_tokens = row.3;
             stats.total_tokens = row.2 + row.3;
+            stats.total_cost = row.4;
         }
+
+        // SQLite has no PERCENTILE function — pull the non-null samples and pick
+        // the percentile index in Rust (cheap; the table is small).
+        stats.ttft_p50_ms = self.usage_percentile("ttft_ms", 0.50);
+        stats.ttft_p95_ms = self.usage_percentile("ttft_ms", 0.95);
+        stats.decode_p50_tok_s = self.usage_percentile("decode_tok_s", 0.50);
+        stats.decode_p95_tok_s = self.usage_percentile("decode_tok_s", 0.95);
 
         if let Ok(mut stmt) = self.conn.prepare(
             "SELECT model, endpoint, COUNT(*), \
                     COALESCE(SUM(prompt_tokens), 0), \
                     COALESCE(SUM(completion_tokens), 0), \
+                    COALESCE(SUM(cost), 0), \
                     AVG(ttft_ms), AVG(decode_tok_s) \
              FROM usage \
              GROUP BY model, endpoint \
@@ -365,8 +392,9 @@ impl Storage {
                     prompt_tokens: prompt,
                     completion_tokens: completion,
                     total_tokens: prompt + completion,
-                    avg_ttft_ms: r.get(5)?,
-                    avg_decode_tok_s: r.get(6)?,
+                    cost: r.get(5)?,
+                    avg_ttft_ms: r.get(6)?,
+                    avg_decode_tok_s: r.get(7)?,
                 })
             }) {
                 stats.by_model = rows.filter_map(Result::ok).collect();
@@ -390,6 +418,27 @@ impl Storage {
         }
 
         stats
+    }
+
+    /// Nearest-rank percentile of a non-null usage column (`q` in 0.0..=1.0).
+    /// Returns `None` when there are no samples. `col` is a compile-time
+    /// literal, never user input.
+    fn usage_percentile(&self, col: &str, q: f64) -> Option<f64> {
+        let sql = format!(
+            "SELECT {col} FROM usage WHERE {col} IS NOT NULL ORDER BY {col}"
+        );
+        let mut stmt = self.conn.prepare(&sql).ok()?;
+        let values: Vec<f64> = stmt
+            .query_map([], |r| r.get::<_, f64>(0))
+            .ok()?
+            .filter_map(Result::ok)
+            .collect();
+        if values.is_empty() {
+            return None;
+        }
+        let rank = (q * values.len() as f64).ceil() as usize;
+        let idx = rank.saturating_sub(1).min(values.len() - 1);
+        Some(values[idx])
     }
 
     /// Wipe all recorded usage (the Usage page's "clear" action).
@@ -1609,6 +1658,7 @@ mod tests {
             completion_tokens: Some(c),
             ttft_ms: Some(100.0),
             decode_tok_s: Some(50.0),
+            cost: Some(0.01),
             ok: true,
         };
         s.record_usage(&rec("mlx-a", 10, 20));
@@ -1621,12 +1671,18 @@ mod tests {
         assert_eq!(stats.prompt_tokens, 115);
         assert_eq!(stats.completion_tokens, 235);
         assert_eq!(stats.total_tokens, 350);
+        assert!((stats.total_cost - 0.03).abs() < 1e-9);
+        // All ttft samples are 100 → both percentiles are 100.
+        assert_eq!(stats.ttft_p50_ms, Some(100.0));
+        assert_eq!(stats.ttft_p95_ms, Some(100.0));
+        assert_eq!(stats.decode_p50_tok_s, Some(50.0));
 
         // Grouped by model, ordered by request count desc → mlx-a (2) first.
         assert_eq!(stats.by_model.len(), 2);
         assert_eq!(stats.by_model[0].model, "mlx-a");
         assert_eq!(stats.by_model[0].requests, 2);
         assert_eq!(stats.by_model[0].total_tokens, 50);
+        assert!((stats.by_model[0].cost - 0.02).abs() < 1e-9);
         assert_eq!(stats.by_model[1].model, "mlx-b");
 
         // One daily bucket (all rows recorded "now").
@@ -1647,6 +1703,7 @@ mod tests {
             completion_tokens: Some(1),
             ttft_ms: None,
             decode_tok_s: None,
+            cost: None,
             ok: true,
         };
         s.record_usage(&rec); // recorded "now"

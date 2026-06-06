@@ -11,10 +11,11 @@ use crate::storage::ConversationSettings;
 use crate::tools::{self, Handler, Safety, ToolDef};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Instant;
 use tauri::State;
 use tauri::ipc::Channel;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{Semaphore, mpsc, oneshot};
 use tokio_util::sync::CancellationToken;
 
 /// Max tool-call → re-stream cycles per user turn (matches the egui app).
@@ -47,6 +48,11 @@ pub struct UsageStatsDto {
     pub prompt_tokens: i64,
     pub completion_tokens: i64,
     pub total_tokens: i64,
+    pub total_cost: f64,
+    pub ttft_p50_ms: Option<f64>,
+    pub ttft_p95_ms: Option<f64>,
+    pub decode_p50_tok_s: Option<f64>,
+    pub decode_p95_tok_s: Option<f64>,
     pub by_model: Vec<UsageByModelDto>,
     pub daily: Vec<UsageDailyDto>,
 }
@@ -59,6 +65,7 @@ pub struct UsageByModelDto {
     pub prompt_tokens: i64,
     pub completion_tokens: i64,
     pub total_tokens: i64,
+    pub cost: f64,
     pub avg_ttft_ms: Option<f64>,
     pub avg_decode_tok_s: Option<f64>,
 }
@@ -67,6 +74,41 @@ pub struct UsageByModelDto {
 pub struct UsageDailyDto {
     pub date: String,
     pub total_tokens: i64,
+}
+
+#[derive(Deserialize)]
+pub struct BenchParams {
+    pub endpoint: String,
+    pub model: String,
+    pub prompt: String,
+    pub max_tokens: u32,
+    pub concurrency: u32,
+    pub total_requests: u32,
+}
+
+/// avg / p50 / p95 of a metric across the benchmark's successful requests.
+#[derive(Serialize, Default)]
+pub struct BenchAgg {
+    pub avg: Option<f64>,
+    pub p50: Option<f64>,
+    pub p95: Option<f64>,
+}
+
+#[derive(Serialize)]
+pub struct BenchResult {
+    pub requests: u32,
+    pub ok: u32,
+    pub errors: u32,
+    pub wall_ms: f64,
+    pub ttft_ms: BenchAgg,
+    pub decode_tok_s: BenchAgg,
+    /// Aggregate decode throughput: completion tokens across all successful
+    /// requests divided by wall-clock time (the headline concurrency number).
+    pub agg_decode_tok_s: f64,
+    pub total_completion_tokens: u64,
+    /// Per-request points (successful only), in completion order, for charts.
+    pub ttft_series: Vec<f64>,
+    pub decode_series: Vec<f64>,
 }
 
 #[derive(Serialize)]
@@ -355,6 +397,11 @@ pub fn usage_stats(state: State<'_, AppState>) -> UsageStatsDto {
         prompt_tokens: s.prompt_tokens,
         completion_tokens: s.completion_tokens,
         total_tokens: s.total_tokens,
+        total_cost: s.total_cost,
+        ttft_p50_ms: s.ttft_p50_ms,
+        ttft_p95_ms: s.ttft_p95_ms,
+        decode_p50_tok_s: s.decode_p50_tok_s,
+        decode_p95_tok_s: s.decode_p95_tok_s,
         by_model: s
             .by_model
             .into_iter()
@@ -365,6 +412,7 @@ pub fn usage_stats(state: State<'_, AppState>) -> UsageStatsDto {
                 prompt_tokens: m.prompt_tokens,
                 completion_tokens: m.completion_tokens,
                 total_tokens: m.total_tokens,
+                cost: m.cost,
                 avg_ttft_ms: m.avg_ttft_ms,
                 avg_decode_tok_s: m.avg_decode_tok_s,
             })
@@ -383,6 +431,179 @@ pub fn usage_stats(state: State<'_, AppState>) -> UsageStatsDto {
 #[tauri::command]
 pub fn clear_usage(state: State<'_, AppState>) {
     state.storage.lock().unwrap().clear_usage();
+}
+
+// ---------- benchmark ----------
+
+struct BenchSample {
+    ttft_ms: Option<f64>,
+    decode_tok_s: Option<f64>,
+    completion: u32,
+    ok: bool,
+}
+
+/// Nearest-rank percentile of a pre-sorted slice (`q` in 0.0..=1.0).
+fn bench_percentile(sorted: &[f64], q: f64) -> Option<f64> {
+    if sorted.is_empty() {
+        return None;
+    }
+    let rank = (q * sorted.len() as f64).ceil() as usize;
+    let idx = rank.saturating_sub(1).min(sorted.len() - 1);
+    Some(sorted[idx])
+}
+
+fn bench_agg(vals: &[f64]) -> BenchAgg {
+    if vals.is_empty() {
+        return BenchAgg::default();
+    }
+    let avg = vals.iter().sum::<f64>() / vals.len() as f64;
+    let mut sorted = vals.to_vec();
+    sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    BenchAgg {
+        avg: Some(avg),
+        p50: bench_percentile(&sorted, 0.50),
+        p95: bench_percentile(&sorted, 0.95),
+    }
+}
+
+/// One benchmark request: stream a single completion and measure TTFT + decode.
+async fn bench_once(
+    endpoint: String,
+    model: String,
+    prompt: String,
+    max_tokens: u32,
+    api_key: Option<String>,
+) -> BenchSample {
+    let (tx, mut rx) = mpsc::unbounded_channel::<StreamEvent>();
+    let params = ChatParams {
+        base_url: endpoint,
+        model,
+        messages: vec![Message::text(Role::User, prompt)],
+        temperature: None,
+        max_tokens: Some(max_tokens),
+        top_p: None,
+        frequency_penalty: None,
+        presence_penalty: None,
+        stop_sequences: None,
+        api_key,
+        tools: None,
+    };
+    let start = Instant::now();
+    api::stream_chat(params, tx, CancellationToken::new());
+
+    let mut first_token: Option<Instant> = None;
+    let mut completion: u32 = 0;
+    let mut errored = false;
+    while let Some(ev) = rx.recv().await {
+        match ev {
+            StreamEvent::Token(_) | StreamEvent::Reasoning(_) => {
+                first_token.get_or_insert_with(Instant::now);
+            }
+            StreamEvent::UsageInfo(u) => {
+                if let Some(c) = u.completion_tokens {
+                    completion = c;
+                }
+            }
+            StreamEvent::Error(_) => errored = true,
+            StreamEvent::Done => break,
+            _ => {}
+        }
+    }
+    if errored {
+        return BenchSample {
+            ttft_ms: None,
+            decode_tok_s: None,
+            completion: 0,
+            ok: false,
+        };
+    }
+    let now = Instant::now();
+    let ttft_ms = first_token.map(|f| f.duration_since(start).as_secs_f64() * 1000.0);
+    let decode_tok_s = match first_token {
+        Some(f) if completion > 0 => {
+            let secs = now.duration_since(f).as_secs_f64();
+            (secs > 0.0).then(|| completion as f64 / secs)
+        }
+        _ => None,
+    };
+    BenchSample {
+        ttft_ms,
+        decode_tok_s,
+        completion,
+        ok: true,
+    }
+}
+
+/// Fire `total_requests` completions at an endpoint (≤ `concurrency` in flight)
+/// and report TTFT/decode percentiles plus aggregate throughput.
+#[tauri::command]
+pub async fn run_benchmark(
+    state: State<'_, AppState>,
+    params: BenchParams,
+) -> Result<BenchResult, String> {
+    if params.model.trim().is_empty() {
+        return Err("Pick a model to benchmark.".into());
+    }
+    let concurrency = params.concurrency.clamp(1, 64) as usize;
+    let total = params.total_requests.clamp(1, 500);
+    let max_tokens = params.max_tokens.clamp(1, 4096);
+    let prompt = if params.prompt.trim().is_empty() {
+        "Write a few sentences about the history of computing.".to_string()
+    } else {
+        params.prompt.clone()
+    };
+    let api_key = state.api_key_for(&params.endpoint);
+
+    let sem = Arc::new(Semaphore::new(concurrency));
+    let mut handles = Vec::with_capacity(total as usize);
+    let wall_start = Instant::now();
+    for _ in 0..total {
+        let permit_src = sem.clone();
+        let endpoint = params.endpoint.clone();
+        let model = params.model.clone();
+        let prompt = prompt.clone();
+        let key = api_key.clone();
+        handles.push(tokio::spawn(async move {
+            let _permit = permit_src.acquire_owned().await.ok()?;
+            Some(bench_once(endpoint, model, prompt, max_tokens, key).await)
+        }));
+    }
+
+    let mut samples = Vec::with_capacity(total as usize);
+    for h in handles {
+        if let Ok(Some(s)) = h.await {
+            samples.push(s);
+        }
+    }
+    let wall_ms = wall_start.elapsed().as_secs_f64() * 1000.0;
+
+    let ok_count = samples.iter().filter(|s| s.ok).count() as u32;
+    let errors = samples.len() as u32 - ok_count;
+    let total_completion: u64 = samples
+        .iter()
+        .filter(|s| s.ok)
+        .map(|s| s.completion as u64)
+        .sum();
+    let ttft_series: Vec<f64> = samples.iter().filter_map(|s| s.ttft_ms).collect();
+    let decode_series: Vec<f64> = samples.iter().filter_map(|s| s.decode_tok_s).collect();
+    let agg_decode_tok_s = if wall_ms > 0.0 {
+        total_completion as f64 / (wall_ms / 1000.0)
+    } else {
+        0.0
+    };
+
+    Ok(BenchResult {
+        requests: total,
+        ok: ok_count,
+        errors,
+        wall_ms,
+        ttft_ms: bench_agg(&ttft_series),
+        decode_tok_s: bench_agg(&decode_series),
+        agg_decode_tok_s,
+        total_completion_tokens: total_completion,
+        ttft_series,
+        decode_series,
+    })
 }
 
 // ---------- projects ----------
@@ -991,6 +1212,7 @@ async fn run_turn(
                 completion_tokens: outcome.completion_tokens,
                 ttft_ms: outcome.ttft_ms,
                 decode_tok_s: outcome.decode_tok_s,
+                cost: outcome.cost,
                 ok: !outcome.errored,
             });
         }
@@ -1194,6 +1416,7 @@ struct StreamOutcome {
     completion_tokens: Option<u32>,
     ttft_ms: Option<f64>,
     decode_tok_s: Option<f64>,
+    cost: Option<f64>,
 }
 
 /// Run one streaming completion, forwarding tokens/reasoning/usage/metrics to
@@ -1237,6 +1460,7 @@ async fn stream_once(
     let mut tool_calls: Vec<ToolCall> = Vec::new();
     let mut usage_prompt: Option<u32> = None;
     let mut usage_completion: Option<u32> = None;
+    let mut usage_cost: Option<f64> = None;
     let mut errored = false;
 
     while let Some(ev) = rx.recv().await {
@@ -1257,6 +1481,7 @@ async fn stream_once(
             StreamEvent::UsageInfo(u) => {
                 usage_prompt = u.prompt_tokens;
                 usage_completion = u.completion_tokens;
+                usage_cost = u.cost;
                 on_event
                     .send(ChatEvent::Usage {
                         prompt_tokens: u.prompt_tokens,
@@ -1307,6 +1532,7 @@ async fn stream_once(
         completion_tokens: usage_completion,
         ttft_ms,
         decode_tok_s,
+        cost: usage_cost,
     }
 }
 
