@@ -1,6 +1,7 @@
-import { useState } from "react";
-import type { Config, GpuKind, RuntimeKind } from "../types";
+import { useEffect, useState } from "react";
+import type { Config, GpuKind, McpServer, McpStatus, RuntimeKind } from "../types";
 import { comboFromEvent, HOTKEY_ACTIONS } from "../lib/hotkeys";
+import { api } from "../lib/tauri";
 
 interface Props {
   config: Config;
@@ -8,7 +9,13 @@ interface Props {
   onSave: (config: Config) => void;
 }
 
-type Section = "general" | "endpoints" | "generation" | "appearance" | "keyboard";
+type Section =
+  | "general"
+  | "endpoints"
+  | "generation"
+  | "appearance"
+  | "keyboard"
+  | "mcp";
 
 const SECTIONS: { key: Section; label: string }[] = [
   { key: "general", label: "General" },
@@ -16,6 +23,7 @@ const SECTIONS: { key: Section; label: string }[] = [
   { key: "generation", label: "Generation" },
   { key: "appearance", label: "Appearance" },
   { key: "keyboard", label: "Keyboard" },
+  { key: "mcp", label: "MCP" },
 ];
 
 const RUNTIMES: RuntimeKind[] = ["openai", "vllm", "omlx", "llamacpp", "llamaswap"];
@@ -55,6 +63,21 @@ function HotkeyInput({
 export function SettingsModal({ config, onClose, onSave }: Props) {
   const [c, setC] = useState<Config>(structuredClone(config));
   const [section, setSection] = useState<Section>("general");
+  const [mcpStatus, setMcpStatus] = useState<McpStatus[]>([]);
+
+  const refreshMcp = () =>
+    api.listMcpServers().then(setMcpStatus).catch(() => setMcpStatus([]));
+  useEffect(() => {
+    void refreshMcp();
+  }, []);
+
+  const servers = c.mcp_servers ?? [];
+  const setServers = (next: McpServer[]) => set("mcp_servers", next);
+  const updateServer = (i: number, patch: Partial<McpServer>) => {
+    const next = servers.slice();
+    next[i] = { ...next[i], ...patch };
+    setServers(next);
+  };
 
   const set = <K extends keyof Config>(k: K, v: Config[K]) =>
     setC((prev) => ({ ...prev, [k]: v }));
@@ -425,6 +448,144 @@ export function SettingsModal({ config, onClose, onSave }: Props) {
                   />
                 </div>
               ))}
+            </div>
+          )}
+
+          {section === "mcp" && (
+            <div className="field">
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                  marginBottom: 6,
+                }}
+              >
+                <label style={{ margin: 0 }}>MCP servers</label>
+                <button
+                  className="tbtn"
+                  onClick={() => void api.reconnectMcp().then(refreshMcp)}
+                >
+                  Reconnect all
+                </button>
+              </div>
+              <div className="hk-hint">
+                Save to apply changes (servers reconnect automatically). HTTP
+                transport is coming soon — use <code>stdio</code> for now.
+              </div>
+              {servers.map((srv, i) => {
+                const st = mcpStatus.find((s) => s.name === srv.name);
+                return (
+                  <div className="endpoint-card" key={i}>
+                    <div className="endpoint-row">
+                      <input
+                        placeholder="name"
+                        style={{ flex: "0 0 130px" }}
+                        value={srv.name}
+                        onChange={(e) => updateServer(i, { name: e.target.value })}
+                      />
+                      <select
+                        style={{ flex: "0 0 90px" }}
+                        value={srv.transport}
+                        onChange={(e) =>
+                          updateServer(i, { transport: e.target.value })
+                        }
+                      >
+                        <option value="stdio">stdio</option>
+                        <option value="http">http</option>
+                      </select>
+                      <span
+                        className="mcp-status"
+                        title={st?.error ?? ""}
+                        style={{ flex: 1, textAlign: "right" }}
+                      >
+                        {st
+                          ? st.connected
+                            ? `● ${st.tool_count} tools`
+                            : `✕ ${st.error ?? "off"}`
+                          : "—"}
+                      </span>
+                      <button
+                        className="icon-btn"
+                        onClick={() => setServers(servers.filter((_, j) => j !== i))}
+                      >
+                        ✕
+                      </button>
+                    </div>
+                    {srv.transport === "http" ? (
+                      <div className="row" style={{ marginTop: 8 }}>
+                        <div style={{ flex: 1 }}>
+                          <label>URL</label>
+                          <input
+                            placeholder="http://host:port/mcp"
+                            value={srv.url ?? ""}
+                            onChange={(e) =>
+                              updateServer(i, { url: e.target.value || null })
+                            }
+                          />
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="row" style={{ marginTop: 8 }}>
+                        <div style={{ flex: "0 0 130px" }}>
+                          <label>Command</label>
+                          <input
+                            placeholder="npx"
+                            value={srv.command ?? ""}
+                            onChange={(e) =>
+                              updateServer(i, { command: e.target.value || null })
+                            }
+                          />
+                        </div>
+                        <div style={{ flex: 1 }}>
+                          <label>Args (space-separated)</label>
+                          <input
+                            placeholder="-y @modelcontextprotocol/server-filesystem ~/code"
+                            value={(srv.args ?? []).join(" ")}
+                            onChange={(e) =>
+                              updateServer(i, {
+                                args: e.target.value.split(/\s+/).filter(Boolean),
+                              })
+                            }
+                          />
+                        </div>
+                      </div>
+                    )}
+                    <div className="row" style={{ marginTop: 8, alignItems: "center" }}>
+                      <label style={{ textTransform: "none", letterSpacing: 0, margin: 0 }}>
+                        <input
+                          type="checkbox"
+                          checked={srv.enabled ?? true}
+                          onChange={(e) => updateServer(i, { enabled: e.target.checked })}
+                        />{" "}
+                        enabled
+                      </label>
+                      <label style={{ textTransform: "none", letterSpacing: 0, margin: 0 }}>
+                        <input
+                          type="checkbox"
+                          checked={srv.auto_approve ?? false}
+                          onChange={(e) =>
+                            updateServer(i, { auto_approve: e.target.checked })
+                          }
+                        />{" "}
+                        auto-approve tools
+                      </label>
+                    </div>
+                  </div>
+                );
+              })}
+              <button
+                className="tbtn"
+                style={{ marginTop: 8 }}
+                onClick={() =>
+                  setServers([
+                    ...servers,
+                    { name: "", transport: "stdio", enabled: true, auto_approve: false },
+                  ])
+                }
+              >
+                + add MCP server
+              </button>
             </div>
           )}
 

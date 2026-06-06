@@ -31,6 +31,7 @@ dirs = "6"
 toml = "0.8"
 regex = "1"
 base64 = "0.22"
+rmcp = { version = "1.7.0", features = ["client", "transport-child-process"] }
 
 [profile.release]
 strip = true

@@ -154,3 +154,24 @@ url = "http://localhost:1234/v1"
 # prometheus_url = "http://spark:8080/metrics"
 # gpu = "agent"
 # agent_url = "http://spark:9099"
+
+# --- MCP servers (optional) ---
+# Connect to Model Context Protocol servers; their tools are exposed to the
+# model alongside hChat's own. Manage these in Settings → MCP, or here.
+# transport = "stdio" spawns `command` with `args`/`env`; "http" is coming soon.
+# auto_approve = true runs that server's tools without the approval card.
+#
+# [[mcp_servers]]
+# name = "filesystem"
+# transport = "stdio"
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-filesystem", "/Users/heath/code"]
+# enabled = true
+# auto_approve = false
+#
+# [[mcp_servers]]
+# name = "github"
+# transport = "stdio"
+# command = "npx"
+# args = ["-y", "@modelcontextprotocol/server-github"]
+# env = { GITHUB_PERSONAL_ACCESS_TOKEN = "ghp_..." }

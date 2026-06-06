@@ -405,6 +405,23 @@ pub fn list_agents(working_dir: Option<String>) -> AgentsDto {
     }
 }
 
+// ---------- MCP ----------
+
+#[tauri::command]
+pub async fn list_mcp_servers(
+    state: State<'_, AppState>,
+) -> Result<Vec<crate::mcp::McpStatus>, String> {
+    Ok(state.mcp.status().await)
+}
+
+/// Reconnect all configured MCP servers (after editing config).
+#[tauri::command]
+pub async fn reconnect_mcp(state: State<'_, AppState>) -> Result<(), String> {
+    let servers = state.config.lock().unwrap().mcp_servers.clone();
+    state.mcp.connect_all(servers).await;
+    Ok(())
+}
+
 #[tauri::command]
 pub fn delete_conversation(state: State<'_, AppState>, id: i64) {
     state.storage.lock().unwrap().delete_conversation(id);
@@ -854,10 +871,13 @@ async fn run_turn(
         tool_defs.push(use_skill_tool());
     }
     let skills_prompt = (!skills.is_empty()).then(|| skills_system_prompt(&skills));
-    let tools_api = if tool_defs.is_empty() {
+    // Native + agent tools, plus tools discovered from connected MCP servers.
+    let mut api_specs = tools::to_api_shape(&tool_defs);
+    api_specs.extend(state.mcp.tool_specs().await);
+    let tools_api = if api_specs.is_empty() {
         None
     } else {
-        Some(tools::to_api_shape(&tool_defs))
+        Some(api_specs)
     };
 
     let cancel = CancellationToken::new();
@@ -930,6 +950,39 @@ async fn run_turn(
                 let (result, is_error) = match skills.iter().find(|s| s.name == name) {
                     Some(s) => (s.body.clone(), false),
                     None => (format!("unknown skill: {name}"), true),
+                };
+                on_event
+                    .send(ChatEvent::ToolResult {
+                        id: call.id.clone(),
+                        name: call.function.name.clone(),
+                        result: result.clone(),
+                        is_error,
+                    })
+                    .ok();
+                messages.push(Message::tool_result(call.id.clone(), result));
+                continue;
+            }
+
+            // MCP tools are routed to their server (honoring auto-approve and the
+            // per-conversation allowlist; otherwise the normal approval flow).
+            if crate::mcp::McpManager::is_mcp_tool(&call.function.name) {
+                let pre_approved = state.mcp.auto_approve(&call.function.name).await
+                    || state
+                        .auto_approved
+                        .lock()
+                        .unwrap()
+                        .contains(&(conversation_id, call.function.name.clone()));
+                let approved = if pre_approved {
+                    true
+                } else {
+                    request_approval(state, on_event, call, conversation_id, &cancel).await
+                };
+                let (result, is_error) = if !approved {
+                    ("Tool call denied by user.".to_string(), true)
+                } else {
+                    let args = serde_json::from_str(&call.function.arguments)
+                        .unwrap_or_else(|_| serde_json::json!({}));
+                    state.mcp.call(&call.function.name, args).await
                 };
                 on_event
                     .send(ChatEvent::ToolResult {

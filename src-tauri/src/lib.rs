@@ -19,6 +19,7 @@ pub mod tools;
 pub mod agents;
 
 mod commands;
+mod mcp;
 mod metrics;
 mod state;
 
@@ -34,6 +35,16 @@ pub fn run() {
             // handle so commands can retarget it.
             let target = metrics::start(app.handle().clone());
             app.manage(metrics::MetricsHandle(target));
+
+            // Connect MCP servers in the background.
+            let state = app.state::<AppState>();
+            let mcp = state.mcp.clone();
+            let servers = state.config.lock().unwrap().mcp_servers.clone();
+            if !servers.is_empty() {
+                tauri::async_runtime::spawn(async move {
+                    mcp.connect_all(servers).await;
+                });
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -56,6 +67,8 @@ pub fn run() {
             commands::export_conversation_file,
             commands::save_draft,
             commands::list_agents,
+            commands::list_mcp_servers,
+            commands::reconnect_mcp,
             commands::cancel_stream,
             commands::send_message,
             commands::regenerate,

@@ -1,5 +1,6 @@
 use serde::de::Deserializer;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::fs;
 use std::io;
 use std::path::PathBuf;
@@ -153,6 +154,37 @@ impl Default for Hotkeys {
     }
 }
 
+fn default_stdio() -> String {
+    "stdio".to_string()
+}
+fn default_true() -> bool {
+    true
+}
+
+/// An MCP server hChat connects to. `transport = "stdio"` spawns `command`
+/// (with `args`/`env`); `transport = "http"` connects to `url` (with `headers`).
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct McpServer {
+    pub name: String,
+    #[serde(default = "default_stdio")]
+    pub transport: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub env: HashMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub headers: HashMap<String, String>,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Run this server's tools without the per-call approval card.
+    #[serde(default)]
+    pub auto_approve: bool,
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug)]
 #[serde(default)]
 pub struct Config {
@@ -177,6 +209,9 @@ pub struct Config {
     pub stop_sequences: Vec<String>,
     /// Rebindable keyboard shortcuts.
     pub hotkeys: Hotkeys,
+    /// MCP servers to connect to.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub mcp_servers: Vec<McpServer>,
 }
 
 impl Default for Config {
@@ -199,6 +234,7 @@ impl Default for Config {
             presence_penalty: None,
             stop_sequences: Vec::new(),
             hotkeys: Hotkeys::default(),
+            mcp_servers: Vec::new(),
         }
     }
 }

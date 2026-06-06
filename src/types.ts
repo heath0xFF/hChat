@@ -21,6 +21,27 @@ export interface Hotkeys {
   stop: string;
 }
 
+export interface McpServer {
+  name: string;
+  transport: string;
+  command?: string | null;
+  args?: string[];
+  env?: Record<string, string>;
+  url?: string | null;
+  headers?: Record<string, string>;
+  enabled?: boolean;
+  auto_approve?: boolean;
+}
+
+export interface McpStatus {
+  name: string;
+  transport: string;
+  connected: boolean;
+  tool_count: number;
+  auto_approve: boolean;
+  error: string | null;
+}
+
 export interface Config {
   font_size: number;
   mono_font_size: number;
@@ -39,6 +60,7 @@ export interface Config {
   presence_penalty: number | null;
   stop_sequences: string[];
   hotkeys: Hotkeys;
+  mcp_servers?: McpServer[];
 }
 
 export interface ConversationDto {
