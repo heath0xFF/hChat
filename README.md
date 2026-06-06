@@ -1,235 +1,381 @@
 # hChat
 
-A lightweight desktop chat client for local LLMs. Built in Rust with [egui](https://github.com/emilk/egui) for a minimal, fast UI.
+A local-LLM **workstation** for your desktop: a fast chat client, a live
+inference-metrics dashboard, and an artifact-rendering panel — over any
+OpenAI-compatible endpoint.
 
-Connects to any OpenAI API-compatible endpoint. Defaults to [LM Studio](https://lmstudio.ai) at `localhost:1234`.
+Point it at a remote **DGX Spark** running vLLM, your MacBook running **oMLX**
+(MLX) and **llama.cpp** (GGUF), **OpenRouter**, **LM Studio**, **Ollama**, or
+anything else that speaks the OpenAI API — chat with your models and watch decode
+tok/s, TTFT, prefill, requests, VRAM, power, and per-GPU stats for each backend.
+
+Built with [Tauri](https://tauri.app): a Rust core (streaming, SQLite history,
+tools, metrics) behind a React/TypeScript UI — a small native binary, not an
+Electron app.
 
 ## Features
 
-- Streaming token display with stop/regenerate controls
-- **Native tool calling** — the model can read files, search code, run shell commands, and write back into your working directory. Five default tools ship pre-configured (`read_file`, `list_directory`, `search_files`, `write_file`, `run_shell`); destructive ones prompt for approval. Define your own tools as TOML files in `~/.config/hchat/tools/` (works with any tool-capable OpenAI-compatible model)
-- **Branching conversations** — every regenerate or edit creates a sibling instead of overwriting; navigate alternates with `◀ N/M ▶` arrows on any branched message
-- **Multimodal content** — drag-and-drop images (png/jpg/webp/gif) into the input as attachments for vision-capable models
-- **Drag-and-drop text files** (rs, py, md, json, etc.) inline into the input as fenced code blocks with language inferred from the extension
-- **Per-conversation settings** — each chat owns its own model, system prompt, temperature, sampling params, and endpoint, persisted to its row
-- **Presets** — save the current chat's settings as a named bundle, apply to other chats or seed new ones
-- **Pinned conversations** sort to the top of the sidebar
-- **Drafts** — your in-progress input persists per-conversation; switch chats and come back to find it intact
-- **Auto-titled chats** — after the first assistant response, hChat generates a short conversation title via a one-shot completion against your current model
-- Markdown rendering in AI responses, with **per-code-block copy buttons** and language pills
-- **Reasoning model support** — inline `<think>` blocks and provider `reasoning` deltas (qwen3, deepseek-r1, gpt-oss, etc.) render as collapsible sections that auto-collapse when streaming finishes
-- **Slash commands** for keyboard-first control: `/model`, `/temp`, `/system`, `/clear`, `/copy`, `/help`
-- **Find in conversation** (Ctrl+F) with match highlighting and scroll-to-first-match
-- Model selector auto-populated from your endpoint
-- Conversation history with SQLite persistence (WAL + busy_timeout). Schema migrations run on launch, so upgrading between versions doesn't require wiping your data
-- Sidebar with conversation list, search, rename, pin, and markdown export
-- **Live token counter** in the input footer (tiktoken-cached) plus post-response usage and cost display
-- System prompt, temperature, max tokens — plus **advanced sampling controls** (`top_p`, `frequency_penalty`, `presence_penalty`, stop sequences)
-- Multiple saved API endpoints with per-endpoint API key support
-- Works with LM Studio, Ollama, oMLX, OpenRouter, vLLM, and any OpenAI-compatible API
-- Hover timestamps on messages
-- Empty-state starter prompts to kick off new chats
-- Dark/light theme toggle
-- Persistent settings via TOML config (`~/.config/hchat/config.toml`) — corrupted files are backed up rather than silently reset
-- Configurable font sizes, custom fonts, and UI scale
-- Cross-platform (Linux, macOS)
+- **Streaming chat** against any OpenAI-compatible endpoint, with per-conversation
+  model, system prompt, and sampling settings
+- **Multiple backends** at once — switch from the top bar; each conversation
+  remembers its own. Arbitrary URLs/ports, per-endpoint API keys
+- **Live metrics dashboard** — decode/TTFT/prefill, requests, VRAM, power, temp,
+  KV-cache, and per-GPU rows, with throughput & TTFT charts. Apple-Silicon GPU
+  stats via [macmon](https://github.com/vladkens/macmon) (no sudo); remote NVIDIA
+  boxes via the bundled **`hchat-agent`**; vLLM / llama.cpp / llama-swap via
+  Prometheus
+- **Native tool calling** — the model can read files, search code, run shell
+  commands, and write into a working directory. Five tools ship pre-configured;
+  destructive ones prompt for approval (with "approve all in this conversation").
+  Define your own as TOML in `~/.config/hchat/tools/`
+- **Artifacts panel** — renders the HTML (live, sandboxed iframe), SVG, Markdown,
+  Mermaid diagrams, and code your models produce, with a preview/source toggle
+- **Branching** — regenerate or edit any message to fork a sibling; navigate
+  with `◀ N/M ▶`
+- **Attachments** — drag-drop / paste images for vision models; drop text files to
+  inline them as fenced code
+- **Presets** — save a model + endpoint + sampling bundle and apply it elsewhere
+- **Reasoning models** — `<think>` blocks and provider `reasoning` deltas render
+  as collapsible sections
+- **Markdown** rendering with syntax highlighting (shiki) and per-code-block copy
+- **Keyboard-first** — slash commands, find-in-conversation, drafts, a live token
+  counter, and fully **rebindable shortcuts**
+- **SQLite history** with auto-titles, search, pin, rename, and markdown export;
+  group chats into **projects** (drag a chat onto a project; pin projects + chats
+  to the top)
+- Light/dark themes, configurable fonts and UI scale; `config.toml` stays the
+  hand-editable source of truth
+- Cross-platform (macOS, Linux)
 
-## Prerequisites
+## How it works
 
-hChat is a client — it needs an OpenAI-compatible chat completions endpoint to talk to. Pick whichever you prefer:
+hChat is a thin, fast client. The Rust core makes OpenAI-compatible requests to
+whatever servers you point it at, measures each request as it streams, and polls
+each backend's metrics sources to populate the dashboard. Nothing leaves your
+machines unless you configure a cloud endpoint.
 
-### LM Studio (default)
+```mermaid
+flowchart LR
+  subgraph app["hChat desktop app (Tauri)"]
+    ui["React UI<br/>chat · dashboard · artifacts"]
+    core["Rust core<br/>streaming · SQLite · tools · metrics poller"]
+    ui <--> core
+  end
 
-1. Download from [lmstudio.ai](https://lmstudio.ai).
-2. Inside LM Studio, search for and download a model (e.g. `qwen2.5-coder-7b-instruct`).
-3. Switch to the **Developer** tab, load the model, and start the local server.
-4. LM Studio's server exposes three API dialects on port 1234 — a native LM Studio API under `/api/v1/...`, an OpenAI-compatible API under `/v1/...`, and an Anthropic-compatible `/v1/messages`. hChat speaks the OpenAI-compatible routes, so the default endpoint is `http://localhost:1234/v1` — no extra configuration required.
+  core -->|OpenAI API| omlx["oMLX&nbsp;(MLX)"]
+  core -->|OpenAI API| lcpp["llama.cpp / llama-swap"]
+  core -->|OpenAI API| vllm["vLLM @ DGX Spark"]
+  core -->|OpenAI API| or["OpenRouter / cloud"]
 
-### Ollama
+  core -.->|macmon| mac["Apple Silicon GPU<br/>power · temp · unified VRAM"]
+  core -.->|HTTP /gpu| agent["hchat-agent<br/>nvidia-smi + /proc/meminfo"]
+  core -.->|/metrics scrape| prom["Prometheus<br/>vLLM · llama.cpp · llama-swap"]
 
-1. Install from [ollama.com](https://ollama.com) (or your package manager).
-2. Pull a model: `ollama pull qwen2.5-coder:7b`.
-3. Run `ollama serve` (it auto-starts on macOS).
-4. In hChat, click `+` next to the endpoint selector and add `http://localhost:11434/v1` — or set it as `default_endpoint` in `config.toml`.
-
-### oMLX
-
-1. Download from [omlx.ai](https://omlx.ai).
-2. oMLX runs from the macOS menu bar — it handles model loading, continuous batching, and SSD caching automatically.
-3. By default oMLX exposes an OpenAI-compatible endpoint at `http://localhost:8000/v1`. Add it in hChat via the `+` button, or set it as `default_endpoint` in `config.toml`.
-
-### Remote APIs
-
-OpenRouter, OpenAI, vLLM, Together, or any other OpenAI-compatible host works. You'll need the base URL and an API key — see [Using OpenRouter or other remote APIs](#using-openrouter-or-other-remote-apis) below.
-
-If hChat can reach the endpoint but reports "No models available", you started the server but haven't loaded (LM Studio) or pulled (Ollama) a model yet.
-
-## Install
-
-Download the latest release from [GitHub Releases](https://github.com/heath0xFF/hChat/releases).
-
-### macOS (Homebrew)
-
-For a launchable app (shows in Spotlight/Launchpad, runs detached):
-
-```bash
-brew tap heath0xFF/tap
-brew install --cask hchat
+  agent -.- vllm
 ```
 
-For the command-line binary only:
+Solid arrows are chat traffic; dotted arrows are metrics. Per-request
+decode/TTFT/prefill is always measured client-side; the dotted sources add
+server-wide throughput and GPU stats.
+
+## Requirements
+
+- **[Rust toolchain](https://rustup.rs)** (stable) — `rustc` 1.85+
+- **[Node.js](https://nodejs.org) 20+** and npm
+- **Tauri system dependencies** for your platform (the native webview + build
+  tools):
+  - **macOS** — Xcode Command Line Tools: `xcode-select --install`
+  - **Debian/Ubuntu** —
+    ```bash
+    sudo apt install libwebkit2gtk-4.1-dev build-essential curl wget file \
+      libxdo-dev libssl-dev libayatana-appindicator3-dev librsvg2-dev
+    ```
+  - **Arch** —
+    ```bash
+    sudo pacman -S --needed webkit2gtk-4.1 base-devel curl wget file openssl \
+      appmenu-gtk-module libappindicator-gtk3 librsvg
+    ```
+  - Other distros / full details: [Tauri prerequisites](https://tauri.app/start/prerequisites/)
+
+## Build & run
 
 ```bash
-brew tap heath0xFF/tap
-brew install hchat
+git clone https://github.com/heath0xFF/hChat
+cd hChat
+
+npm install          # frontend deps + Tauri CLI
+npm run tauri dev    # run the app (hot reload)
+
+npm run tauri build  # produce a release bundle (.app / .dmg / .deb)
 ```
 
-To update to the latest release:
+`npm run tauri dev` runs the app in development with hot reload — use this day to
+day. `npm run tauri build` compiles an optimized frontend (`vite build`) and a
+release Rust binary, then packages a **native installer for your platform** — a
+`.app` + `.dmg` on macOS, a `.deb` / `.AppImage` / `.rpm` on Linux — under
+`src-tauri/target/release/bundle/`. The standalone binary is at
+`src-tauri/target/release/hchat` if you just want to copy that somewhere on your
+`PATH`.
+
+## Migrating from a previous (Homebrew) install
+
+hChat reads and writes the same files as the older version, so your
+conversations, settings, and custom tools carry over **automatically** — nothing
+to export or import:
+
+- **Conversations** (SQLite): `~/Library/Application Support/hchat/hchat.db`
+  (macOS) · `~/.local/share/hchat/hchat.db` (Linux)
+- **Config**: `~/.config/hchat/config.toml`
+- **Custom tools**: the hChat config dir — `~/Library/Application Support/hchat/tools/`
+  (macOS) · `~/.config/hchat/tools/` (Linux)
+
+To switch over:
 
 ```bash
-brew update
-brew upgrade --cask hchat   # or: brew upgrade hchat
+# 1. (optional) back up your database
+cp ~/Library/Application\ Support/hchat/hchat.db ~/hchat-backup.db
+
+# 2. remove the old Homebrew install
+brew uninstall --cask hchat   # if you installed the .app cask
+brew uninstall hchat          # if you installed the CLI binary
+
+# 3. build and run the new version (see "Build & run" above)
 ```
 
-> The `.app` is not code-signed; the cask clears the Gatekeeper
-> quarantine flag on install so it launches normally.
+On first launch hChat reads your existing `config.toml` — new fields (hotkeys,
+per-endpoint metrics) just take their defaults — and runs SQLite schema
+migrations in place, so older history upgrades without data loss. A corrupt
+config is backed up rather than overwritten.
 
-### macOS (manual)
+## Backends
+
+hChat is a client — point it at a running OpenAI-compatible server. Add endpoints
+in **Settings → Endpoints** (or in `config.toml`); switch from the top-bar
+dropdown.
+
+| Backend | Typical endpoint | Notes |
+|---|---|---|
+| **oMLX** (MLX, macOS) | `http://localhost:8000/v1` | `omlx serve` from [omlx.ai](https://omlx.ai); port is configurable |
+| **llama.cpp** (GGUF) | `http://localhost:8080/v1` | run `llama-server --metrics` for dashboard scraping |
+| **llama-swap** | `http://host:8080/v1` | model-swapping proxy; exposes its own `/metrics` |
+| **vLLM** (e.g. DGX Spark) | `http://host:8000/v1` | exposes Prometheus `/metrics` |
+| **OpenRouter** (cloud) | `https://openrouter.ai/api/v1` | needs an API key |
+| **LM Studio** | `http://localhost:1234/v1` | load a model + start the server |
+| **Ollama** | `http://localhost:11434/v1` | `ollama pull <model>` first |
+
+If hChat reaches an endpoint but reports "No models available", the server is up
+but no model is loaded/pulled.
+
+## Metrics dashboard
+
+The **Status** view shows live metrics for the active conversation's backend.
+Per-request decode/TTFT/prefill is always measured client-side; richer stats are
+opt-in per endpoint (set them in **Settings → Endpoints** or `config.toml`):
+
+```toml
+# llama.cpp on this Mac (start it with `llama-server --metrics`)
+[[saved_endpoints]]
+url = "http://localhost:8080/v1"
+runtime = "llamacpp"
+prometheus_url = "http://localhost:8080/metrics"   # decode/prefill/requests/KV
+
+# Remote DGX Spark running vLLM, GPU stats via the agent (below)
+[[saved_endpoints]]
+url = "http://spark:8000/v1"
+runtime = "vllm"
+prometheus_url = "http://spark:8000/metrics"
+gpu = "agent"
+agent_url = "http://spark:9099"
+```
+
+- **`runtime`** — `vllm` | `omlx` | `llamacpp` | `llamaswap` | `openai`
+- **`prometheus_url`** — scraped for decode/prefill tok/s, TTFT, requests, KV cache
+- **`gpu`** — `macmon` (Apple Silicon, no sudo) | `agent` (remote NVIDIA) | `none`.
+  Local endpoints on macOS default to `macmon` automatically, so VRAM/power/temp
+  show up with no config
+
+### The metrics agent (`hchat-agent`)
+
+`nvidia-smi` can't report VRAM on a GB10 / DGX Spark — CPU and GPU share unified
+LPDDR5X, so memory shows as `[Not Supported]`. The bundled **`hchat-agent`** reads
+`nvidia-smi` (power/temp/util) *and* `/proc/meminfo` (unified VRAM) and serves them
+as JSON. It's a single zero-dependency Rust binary (~450 KB) and is independent of
+your inference server — it works the same whether the box runs vLLM, llama.cpp, or
+llama-swap.
+
+**1. (Optional) Confirm your server's metrics.**
+- **vLLM** serves Prometheus at `/metrics` by default (`http://host:8000/metrics`).
+- **llama-swap** has its own `/metrics` (`http://host:8080/metrics`).
+- **plain llama.cpp** needs `llama-server --metrics`.
 
 ```bash
-# Binary
-tar xzf hchat-macos-arm64.tar.gz
-mv hchat /usr/local/bin/
-
-# Or use the .app bundle (use -x86_64 on Intel Macs)
-unzip hChat-arm64.app.zip -d /Applications
+curl -s http://localhost:8000/metrics | head    # on the box
 ```
 
-### Debian/Ubuntu
+**2. Build the agent on the box** (needs the Rust toolchain and `nvidia-smi`):
 
 ```bash
-sudo dpkg -i hchat_*.deb
+git clone https://github.com/heath0xFF/hChat && cd hChat/agent
+cargo build --release
+sudo install -m755 target/release/hchat-agent /usr/local/bin/hchat-agent
 ```
 
-### Arch Linux
+> Prefer not to install Rust on the box? Cross-compile from another Linux machine
+> with `rustup target add aarch64-unknown-linux-gnu` (or `…-musl` for a fully
+> static binary) and `scp` the result over.
+
+**3. Run it** — foreground to test, or as a service to persist:
 
 ```bash
-# From the repo's pkg/arch directory
-makepkg -si
+hchat-agent --port 9099            # serves GET /gpu (binds 0.0.0.0 by default)
+curl -s http://localhost:9099/gpu  # sanity check — JSON with VRAM/power/temp
 ```
 
-## Build from source
+```ini
+# /etc/systemd/system/hchat-agent.service
+[Unit]
+Description=hChat GPU metrics agent
+After=network.target
 
-Requires the [Rust toolchain](https://rustup.rs).
+[Service]
+ExecStart=/usr/local/bin/hchat-agent --port 9099
+Restart=on-failure
+User=YOUR_USER
+
+[Install]
+WantedBy=multi-user.target
+```
 
 ```bash
-cargo run --release
+sudo systemctl daemon-reload && sudo systemctl enable --now hchat-agent
 ```
 
-## Launch
+**4. Reach it from your Mac.**
 
-With your LLM server already running (see [Prerequisites](#prerequisites)):
-
-```bash
-# Linux: run detached so it doesn't tie up your terminal
-hchat &disown
-
-# macOS: open the .app bundle, or run detached
-open /Applications/hChat.app
-# or
-hchat &disown
-```
-
-hChat connects to `http://localhost:1234/v1` (LM Studio) by default. Switch endpoints from the top bar dropdown, or add new ones via the `+` button.
-
-### Using OpenRouter or other remote APIs
-
-1. Click `+` next to the endpoint selector in the top bar
-2. Enter the API base URL (e.g. `https://openrouter.ai/api/v1`) and your API key
-3. Click Add, then select the new endpoint from the dropdown
-4. Models auto-populate from the remote API
-
-Or configure it directly in `config.toml` — see [example.config.toml](example.config.toml) for all options.
+- **Same network:** use the box's hostname/IP (`agent_url = "http://host:9099"`,
+  `prometheus_url = "http://host:8000/metrics"`); if it has a firewall, allow
+  ports `9099` and the server's metrics port.
+- **Not on the same network:** SSH-tunnel and point hChat at `localhost`:
+  ```bash
+  ssh -N -L 9099:localhost:9099 -L 8000:localhost:8000 you@host
+  ```
+  The agent has no auth; on an untrusted network run it with `--bind 127.0.0.1`
+  and reach it through the tunnel.
 
 ## Configuration
 
 Two layers:
 
-- **Global defaults** live in `~/.config/hchat/config.toml` — model name, system prompt, sampling params, endpoints, fonts, theme. These seed every new conversation. Edit the file directly or use the settings panel (gear icon). See [example.config.toml](example.config.toml) for a fully commented example.
-- **Per-conversation overrides** live in the SQLite database alongside your messages. Tweaking the system prompt or temperature inside a chat only affects *that* chat — your global defaults stay untouched. Save the resulting bundle as a preset to apply elsewhere.
+- **Global defaults** — `~/.config/hchat/config.toml`: default endpoint, system
+  prompt, sampling params, appearance, hotkeys, and saved endpoints (with optional
+  keys + metrics config). Edit directly or use **Settings** (Cmd/Ctrl+,). See
+  [example.config.toml](src-tauri/example.config.toml). Corrupt files are backed
+  up rather than silently reset.
+- **Per-conversation overrides** — stored in SQLite alongside messages. Changing
+  the model/temperature inside a chat affects only that chat. Save a bundle as a
+  **preset** to reuse it.
 
-Conversation data lives in `~/Library/Application Support/hchat/hchat.db` (macOS) or `~/.local/share/hchat/hchat.db` (Linux). Schema migrations run automatically on launch, so upgrading between versions doesn't require wiping your data.
-
-All config fields are optional. Missing fields use defaults, so existing configs won't break on upgrade.
-
-### Custom fonts
-
-Set `font_family` and `mono_font_family` to any font installed on your system. hChat looks up fonts by name using your platform's font system (fontconfig on Linux, Core Text on macOS). Leave empty to use egui's built-in fonts. Font changes take effect on save and restart.
-
-### API keys
-
-API keys are stored per-endpoint in `config.toml`. Endpoints that don't need authentication (like local LM Studio or Ollama) simply omit the `api_key` field. Keys are sent as `Authorization: Bearer` headers.
+Conversation data lives in `~/Library/Application Support/hchat/hchat.db` (macOS)
+or `~/.local/share/hchat/hchat.db` (Linux). API keys are sent as
+`Authorization: Bearer`; endpoints that don't need auth omit the key.
 
 ## Tools
 
-Tool-capable models (OpenAI gpt-4+, Claude, most modern frontier models) can call functions hChat exposes. Five defaults are seeded into `~/.config/hchat/tools/` on first launch:
+Tool-capable models can call functions hChat exposes. Five defaults are seeded
+into `~/.config/hchat/tools/` on first launch:
 
 | Tool | Safety | Description |
 |---|---|---|
-| `read_file` | auto | Reads a file (with optional `offset`/`limit` for slicing). Up to 100KB per call. |
-| `list_directory` | auto | Lists entries with `d/` (directory) or `f/` (file) prefix. |
-| `search_files` | auto | Recursive regex search; skips dotdirs and binary files. |
-| `write_file` | confirm | Writes a file (overwrite or append). Creates parent dirs. |
-| `run_shell` | confirm | Runs `sh -c` in the conversation's working directory. 5 minute wall-clock cap. |
+| `read_file` | auto | Reads a file (optional `offset`/`limit`), up to 100 KB |
+| `list_directory` | auto | Lists entries with `d/`/`f/` prefixes |
+| `search_files` | auto | Recursive regex search; skips dotdirs + binaries |
+| `write_file` | confirm | Writes a file; creates parent dirs |
+| `run_shell` | confirm | Runs a shell command in the working dir; 5-min cap |
 
-`safety = "auto"` tools execute silently; `safety = "confirm"` tools pop an approval card with the full args before running. The card has **Approve**, **Approve all in this conv** (per-conversation allowlist for that tool name), and **Reject** buttons.
+`auto` tools run silently; `confirm` tools show an approval card (Approve /
+Approve-all-in-this-conversation / Deny). Each conversation has its own
+`working_dir` that relative paths resolve against (defaults to home). Tool chains
+are capped at 8 cycles per turn.
 
-### Working directory
-
-Each conversation has its own `working_dir` (settings panel). All tool calls resolve relative paths against it. Defaults to your home directory; set it to a project root and the model can reason about that codebase end-to-end.
-
-### Defining your own tools
-
-Drop a `.toml` file into `~/.config/hchat/tools/`. The minimum is `name`, `description`, JSON-schema `parameters`, and a `handler`. Two handler types:
+Define your own by dropping a `.toml` into `~/.config/hchat/tools/`:
 
 ```toml
-# Builtin: hardcoded Rust handler. Used by the 5 defaults.
-handler = "builtin:read_file"
+name = "git_log"
+description = "Recent commits"
+parameters = { type = "object", properties = { count = { type = "integer" } } }
 
-# Shell: forks an argv with {{name}} substitution from the call's arguments.
+# Builtin Rust handler (the 5 defaults use this):
+# handler = "builtin:read_file"
+# Or a shell command with {{name}} substitution:
 handler = { shell = ["git", "log", "--oneline", "-n", "{{count}}"] }
-safety = "confirm"  # or "auto" for read-only tools
+safety = "confirm"
 ```
 
-Restart hChat to load new tools. Edits to existing tool files take effect on next launch.
+Restart to load new/edited tools.
 
-### Iteration cap
+## Skills, commands & the `~/.agents` convention
 
-The model can chain tool calls — read a file, look at the imports, read those, then propose an edit. hChat caps this at **8 cycles per user turn** to prevent runaway loops. The counter resets on the next user message (or on regenerate / edit).
+hChat also discovers portable [dot-agents](https://www.dot-agents.com/)-style
+resources, so commands, skills, and tools you've set up for other agents work
+here too. It scans, in increasing precedence:
 
-## Slash commands
+```text
+~/.agents/                    # user-level
+~/.agents/local/              # machine-specific overrides (gitignored)
+<conversation working_dir>/.agents/   # project-local, overrides the above
+```
 
-Type any of these in the input box to control hChat without leaving the keyboard. Aliases in parens.
+Each directory may contain:
 
-| Command | Action |
-|---|---|
-| `/model <name>` (`/m`) | Switch model — argument is substring-matched against your model list |
-| `/temp <0..2>` (`/t`) | Set sampling temperature |
-| `/system <text>` (`/sys`) | Set the system prompt for the current conversation (empty argument clears it) |
-| `/clear` (`/new`) | Start a new conversation |
-| `/copy` | Copy the last assistant reply to clipboard |
-| `/help` (`/?`, `/h`) | Show the command reference |
+- **`commands/<name>.md`** → a `/name` slash command. The markdown body is a
+  prompt template; `$ARGUMENTS` (or `{{args}}`) is replaced with whatever you type
+  after the command, then sent as your message. Optional YAML frontmatter
+  (`description:`) shows up in `/help`.
 
-Unknown commands surface as a toast rather than being sent to the model, so a typo like `/temprature 0.5` won't reach your provider.
+  ```markdown
+  ---
+  description: Summarize text crisply
+  ---
+  Summarize the following in 3 bullet points:
 
-## Keybindings
+  $ARGUMENTS
+  ```
+
+- **`skills/<name>/SKILL.md`** → a skill: YAML frontmatter (`name`,
+  `description`) plus instructions. Skills work **two ways** — the model sees the
+  available skills and can pull one in on demand (it calls a built-in `use_skill`
+  tool to load the full instructions), *and* you can inject one yourself by typing
+  `/name`.
+
+  ```markdown
+  ---
+  name: code-review
+  description: Review a diff for correctness and clarity
+  ---
+  When reviewing, check for: off-by-one errors, unhandled errors, …
+  ```
+
+- **`tools/<name>.toml`** → the same tool format as above, joined into the
+  model's tool set for that conversation.
+
+`/help` lists the commands and skills it found. Project-local entries (under the
+conversation's working directory) override your user-level ones by name.
+
+## Keyboard & commands
+
+Shortcuts are rebindable in **Settings → Keyboard** (`mod` = Cmd on macOS /
+Ctrl elsewhere). Defaults:
 
 | Key | Action |
 |---|---|
-| Enter | Send message |
-| Shift+Enter | New line |
-| Ctrl/Cmd+N | New conversation |
-| Ctrl/Cmd+F | Toggle find-in-conversation |
-| Esc | Close find bar |
+| Enter / Shift+Enter | Send / newline |
+| `mod`+N | New chat |
+| `mod`+L | Focus the message input |
+| `mod`+F | Find in conversation |
+| `mod`+J | Toggle the artifacts panel |
+| `mod`+, | Open settings |
+| `mod`+. | Stop generation |
+| `mod`+Enter | Save & resend (while editing a message) |
 
-Shortcuts are gated on whether a text field is currently focused — if you're typing in a settings field or message edit, Ctrl+F/Ctrl+N won't fire until you defocus.
+**Slash commands** (type in the composer): `/model <name>`, `/temp <0..2>`,
+`/system <text>`, `/clear`, `/copy`, `/help` (aliases `/m /t /sys /new /?`).

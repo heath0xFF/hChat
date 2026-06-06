@@ -1,0 +1,17 @@
+[package]
+name = "hchat-agent"
+version = "0.1.0"
+edition = "2021"
+description = "Tiny GPU-metrics exporter for hChat — nvidia-smi + /proc/meminfo over HTTP"
+license = "MIT"
+
+[[bin]]
+name = "hchat-agent"
+path = "src/main.rs"
+
+# Zero dependencies: std-only, so it cross-compiles trivially and scp's as a
+# single static-ish binary onto a DGX Spark (or any NVIDIA Linux box).
+
+[profile.release]
+opt-level = "s"
+strip = true
