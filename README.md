@@ -1,74 +1,87 @@
 # hChat
 
 A local-LLM **workstation** for your desktop: a fast chat client, a live
-inference-metrics dashboard, and (soon) an artifact-rendering sidebar — over any
+inference-metrics dashboard, and an artifact-rendering panel — over any
 OpenAI-compatible endpoint.
 
-Built with [Tauri](https://tauri.app) (Rust core + a React/TypeScript frontend).
-Talk to a remote **DGX Spark** running vLLM, your MacBook running **oMLX** (MLX)
-and **llama.cpp** (GGUF), **OpenRouter**, **LM Studio**, **Ollama**, or anything
-else that speaks the OpenAI API — and see decode tok/s, TTFT, prefill, requests,
-VRAM, power, and GPU stats for each.
+Point it at a remote **DGX Spark** running vLLM, your MacBook running **oMLX**
+(MLX) and **llama.cpp** (GGUF), **OpenRouter**, **LM Studio**, **Ollama**, or
+anything else that speaks the OpenAI API — chat with your models and watch decode
+tok/s, TTFT, prefill, requests, VRAM, power, and per-GPU stats for each backend.
 
-> ### ⚠️ Status: rewrite in progress
-> hChat started as a Rust/egui chat client and is being rebuilt as a Tauri
-> workstation on the `rewrite-tauri` branch.
-> - **Phase A — chat (done):** full-featured streaming chat with history,
->   branching, tools, attachments, and presets.
-> - **Phase B — metrics dashboard (core done):** live GPU stats via `macmon`
->   (Apple Silicon, no sudo) and the `hchat-agent` on the Spark, plus vLLM /
->   llama.cpp Prometheus scraping. The Status view shows decode/TTFT/prefill,
->   requests, VRAM, power, temp, and per-GPU rows.
-> - **Phase C — artifacts sidebar (done):** a collapsible panel that renders the
->   HTML/SVG/Markdown/code your models produce, Claude-Desktop style.
+Built with [Tauri](https://tauri.app): a Rust core (streaming, SQLite history,
+tools, metrics) behind a React/TypeScript UI — a small native binary, not an
+Electron app.
 
-## Features (today)
+## Features
 
-- **Streaming chat** with stop, against any OpenAI-compatible endpoint
-- **Multiple backends** — switch endpoints from the top bar; each conversation
-  remembers its own model + endpoint. Arbitrary URLs/ports, per-endpoint API keys
+- **Streaming chat** against any OpenAI-compatible endpoint, with per-conversation
+  model, system prompt, and sampling settings
+- **Multiple backends** at once — switch from the top bar; each conversation
+  remembers its own. Arbitrary URLs/ports, per-endpoint API keys
+- **Live metrics dashboard** — decode/TTFT/prefill, requests, VRAM, power, temp,
+  KV-cache, and per-GPU rows, with throughput & TTFT charts. Apple-Silicon GPU
+  stats via [macmon](https://github.com/vladkens/macmon) (no sudo); remote NVIDIA
+  boxes via the bundled **`hchat-agent`**; vLLM / llama.cpp / llama-swap via
+  Prometheus
 - **Native tool calling** — the model can read files, search code, run shell
-  commands, and write into a working directory. Five tools ship pre-configured
-  (`read_file`, `list_directory`, `search_files`, `write_file`, `run_shell`);
-  destructive ones pop an approval card. Define your own as TOML in
-  `~/.config/hchat/tools/`. Chains are capped at 8 tool cycles per turn
-- **Branching** — regenerate the last reply or edit any message to fork a new
-  sibling instead of overwriting; navigate alternates with `◀ N/M ▶`
-- **Attachments** — drag-drop / paste images (png/jpg/webp/gif) for vision models;
-  drop text files (rs, py, md, json, …) to inline them as fenced code
-- **Presets** — save the current model + endpoint + sampling bundle by name and
-  apply it elsewhere
-- **Artifacts panel** — a collapsible side panel that renders the HTML (live,
-  sandboxed iframe), SVG, Markdown, and code blocks your models produce, with a
-  preview/source toggle. Opens automatically for fresh HTML/SVG, or from the
-  `open` button on any code block
-- **Reasoning models** — inline `<think>` blocks and provider `reasoning` deltas
-  (qwen3, deepseek-r1, gpt-oss, …) render as collapsible sections
-- **Markdown rendering** with syntax highlighting (shiki) and per-code-block copy
-- **Per-conversation settings** — model, system prompt, temperature, and advanced
-  sampling (`top_p`, `frequency_penalty`, `presence_penalty`, stop sequences)
-- **Auto-titled chats** from the first exchange; sidebar with search, rename, pin,
-  delete
-- **SQLite history** (WAL) with on-launch schema migrations — upgrades don't wipe
-  data
-- **Keyboard-first** — slash commands (`/model`, `/temp`, `/system`, `/clear`,
-  `/copy`, `/help`), find-in-conversation (Cmd+F), per-conversation drafts, a live
-  token counter, and light/dark theme + font/UI-scale settings
-- **Live metrics dashboard** — per-backend decode/TTFT/prefill, requests, VRAM,
-  power, temp, KV-cache, and per-GPU rows, with throughput & TTFT charts.
-  Apple-Silicon GPU stats come from `macmon` (no sudo); remote NVIDIA boxes use
-  the bundled **`hchat-agent`**; vLLM/llama.cpp expose the rest via Prometheus
-- `config.toml` stays the source of truth and hand-editable
+  commands, and write into a working directory. Five tools ship pre-configured;
+  destructive ones prompt for approval (with "approve all in this conversation").
+  Define your own as TOML in `~/.config/hchat/tools/`
+- **Artifacts panel** — renders the HTML (live, sandboxed iframe), SVG, Markdown,
+  Mermaid diagrams, and code your models produce, with a preview/source toggle
+- **Branching** — regenerate or edit any message to fork a sibling; navigate
+  with `◀ N/M ▶`
+- **Attachments** — drag-drop / paste images for vision models; drop text files to
+  inline them as fenced code
+- **Presets** — save a model + endpoint + sampling bundle and apply it elsewhere
+- **Reasoning models** — `<think>` blocks and provider `reasoning` deltas render
+  as collapsible sections
+- **Markdown** rendering with syntax highlighting (shiki) and per-code-block copy
+- **Keyboard-first** — slash commands, find-in-conversation, drafts, a live token
+  counter, and fully **rebindable shortcuts**
+- **SQLite history** with auto-titles, search, pin, rename, and markdown export
+- Light/dark themes, configurable fonts and UI scale; `config.toml` stays the
+  hand-editable source of truth
 - Cross-platform (macOS, Linux)
 
-## Requirements
+## How it works
 
-The rewrite builds from source. You need:
+hChat is a thin, fast client. The Rust core makes OpenAI-compatible requests to
+whatever servers you point it at, measures each request as it streams, and polls
+each backend's metrics sources to populate the dashboard. Nothing leaves your
+machines unless you configure a cloud endpoint.
+
+```mermaid
+flowchart LR
+  subgraph app["hChat desktop app (Tauri)"]
+    ui["React UI<br/>chat · dashboard · artifacts"]
+    core["Rust core<br/>streaming · SQLite · tools · metrics poller"]
+    ui <--> core
+  end
+
+  core -->|OpenAI API| omlx["oMLX&nbsp;(MLX)"]
+  core -->|OpenAI API| lcpp["llama.cpp / llama-swap"]
+  core -->|OpenAI API| vllm["vLLM @ DGX Spark"]
+  core -->|OpenAI API| or["OpenRouter / cloud"]
+
+  core -.->|macmon| mac["Apple Silicon GPU<br/>power · temp · unified VRAM"]
+  core -.->|HTTP /gpu| agent["hchat-agent<br/>nvidia-smi + /proc/meminfo"]
+  core -.->|/metrics scrape| prom["Prometheus<br/>vLLM · llama.cpp · llama-swap"]
+
+  agent -.- vllm
+```
+
+Solid arrows are chat traffic; dotted arrows are metrics. Per-request
+decode/TTFT/prefill is always measured client-side; the dotted sources add
+server-wide throughput and GPU stats.
+
+## Requirements
 
 - **[Rust toolchain](https://rustup.rs)** (stable) — `rustc` 1.85+
 - **[Node.js](https://nodejs.org) 20+** and npm
 - **Tauri system dependencies** for your platform (the native webview + build
-  tools). Quick version:
+  tools):
   - **macOS** — Xcode Command Line Tools: `xcode-select --install`
   - **Debian/Ubuntu** —
     ```bash
@@ -87,7 +100,6 @@ The rewrite builds from source. You need:
 ```bash
 git clone https://github.com/heath0xFF/hChat
 cd hChat
-git checkout rewrite-tauri
 
 npm install          # frontend deps + Tauri CLI
 npm run tauri dev    # run the app (hot reload)
@@ -95,19 +107,18 @@ npm run tauri dev    # run the app (hot reload)
 npm run tauri build  # produce a release bundle (.app / .dmg / .deb)
 ```
 
-> Prebuilt **releases** on GitHub are the previous (egui) version. The Tauri
-> workstation currently builds from source on the branch above.
-
 ## Backends
 
 hChat is a client — point it at a running OpenAI-compatible server. Add endpoints
-from the `+`/settings UI or in `config.toml`; switch from the top-bar dropdown.
+in **Settings → Endpoints** (or in `config.toml`); switch from the top-bar
+dropdown.
 
 | Backend | Typical endpoint | Notes |
 |---|---|---|
 | **oMLX** (MLX, macOS) | `http://localhost:8000/v1` | `omlx serve` from [omlx.ai](https://omlx.ai); port is configurable |
-| **llama.cpp** (GGUF) | `http://localhost:8080/v1` | run `llama-server --metrics` for Phase B scraping |
-| **vLLM** (e.g. DGX Spark) | `http://<host>:8000/v1` | exposes Prometheus `/metrics` |
+| **llama.cpp** (GGUF) | `http://localhost:8080/v1` | run `llama-server --metrics` for dashboard scraping |
+| **llama-swap** | `http://host:8080/v1` | model-swapping proxy; exposes its own `/metrics` |
+| **vLLM** (e.g. DGX Spark) | `http://host:8000/v1` | exposes Prometheus `/metrics` |
 | **OpenRouter** (cloud) | `https://openrouter.ai/api/v1` | needs an API key |
 | **LM Studio** | `http://localhost:1234/v1` | load a model + start the server |
 | **Ollama** | `http://localhost:11434/v1` | `ollama pull <model>` first |
@@ -117,9 +128,9 @@ but no model is loaded/pulled.
 
 ## Metrics dashboard
 
-The **Status** view (left rail) shows live inference metrics for the active
-conversation's backend. Per-request decode/TTFT/prefill is always measured
-client-side; richer stats are opt-in per endpoint in `config.toml`:
+The **Status** view shows live metrics for the active conversation's backend.
+Per-request decode/TTFT/prefill is always measured client-side; richer stats are
+opt-in per endpoint (set them in **Settings → Endpoints** or `config.toml`):
 
 ```toml
 # llama.cpp on this Mac (start it with `llama-server --metrics`)
@@ -138,63 +149,47 @@ agent_url = "http://spark:9099"
 ```
 
 - **`runtime`** — `vllm` | `omlx` | `llamacpp` | `llamaswap` | `openai`
-- **`prometheus_url`** — scraped for decode/prefill tok/s, TTFT, requests, KV cache.
-  For **llama-swap**, set `runtime = "llamaswap"` and point this at llama-swap's
-  own `/metrics` (it exports `llama_swap_*` token-rate metrics)
+- **`prometheus_url`** — scraped for decode/prefill tok/s, TTFT, requests, KV cache
 - **`gpu`** — `macmon` (Apple Silicon, no sudo) | `agent` (remote NVIDIA) | `none`.
   Local endpoints on macOS default to `macmon` automatically, so VRAM/power/temp
-  show up with no config.
+  show up with no config
 
-### DGX Spark setup (`hchat-agent`)
+### The metrics agent (`hchat-agent`)
 
-`nvidia-smi` can't report VRAM on the GB10 / DGX Spark — CPU and GPU share
-unified LPDDR5X, so memory shows as `[Not Supported]`. The bundled
-**`hchat-agent`** works around this by reading `nvidia-smi` (power/temp/util)
-*and* `/proc/meminfo` (unified VRAM) and serving them as JSON. It's a single
-zero-dependency Rust binary (~450 KB).
+`nvidia-smi` can't report VRAM on a GB10 / DGX Spark — CPU and GPU share unified
+LPDDR5X, so memory shows as `[Not Supported]`. The bundled **`hchat-agent`** reads
+`nvidia-smi` (power/temp/util) *and* `/proc/meminfo` (unified VRAM) and serves them
+as JSON. It's a single zero-dependency Rust binary (~450 KB) and is independent of
+your inference server — it works the same whether the box runs vLLM, llama.cpp, or
+llama-swap.
 
-The agent only reports GPU/system stats, so it's **independent of your inference
-server** — it works the same whether the Spark runs vLLM, llama.cpp, or
-**llama-swap**. The VRAM/power/temp panel and chat work regardless; the
-`prometheus_url` just adds server-side throughput tiles.
-
-**1. (Optional) Point `prometheus_url` at your server's metrics.**
-- **vLLM** serves Prometheus at `/metrics` on its API port by default
-  (`http://spark:8000/metrics`, `runtime = "vllm"`).
-- **llama-swap** has its own `/metrics` (`http://spark:8080/metrics`,
-  `runtime = "llamaswap"`) — it swaps models by name and aggregates token-rate
-  metrics across them.
-- **plain llama.cpp** needs `llama-server --metrics` (`runtime = "llamacpp"`).
+**1. (Optional) Confirm your server's metrics.**
+- **vLLM** serves Prometheus at `/metrics` by default (`http://host:8000/metrics`).
+- **llama-swap** has its own `/metrics` (`http://host:8080/metrics`).
+- **plain llama.cpp** needs `llama-server --metrics`.
 
 ```bash
-curl -s http://localhost:8080/metrics | head    # on the Spark (llama-swap)
+curl -s http://localhost:8000/metrics | head    # on the box
 ```
 
-**2. Build the agent on the Spark.** It needs the Rust toolchain
-([rustup.rs](https://rustup.rs)) and `nvidia-smi` on `PATH` (already present on a
-DGX Spark). Get the source onto the box (`git clone` or `scp -r agent/`), then:
+**2. Build the agent on the box** (needs the Rust toolchain and `nvidia-smi`):
 
 ```bash
-# on the Spark
-git clone https://github.com/heath0xFF/hChat && cd hChat
-git checkout rewrite-tauri
-cd agent
+git clone https://github.com/heath0xFF/hChat && cd hChat/agent
 cargo build --release
 sudo install -m755 target/release/hchat-agent /usr/local/bin/hchat-agent
 ```
 
-> Prefer not to install Rust on the Spark? Cross-compile from another Linux box
+> Prefer not to install Rust on the box? Cross-compile from another Linux machine
 > with `rustup target add aarch64-unknown-linux-gnu` (or `…-musl` for a fully
 > static binary) and `scp` the result over.
 
-**3. Run it.** For a quick test, foreground:
+**3. Run it** — foreground to test, or as a service to persist:
 
 ```bash
 hchat-agent --port 9099            # serves GET /gpu (binds 0.0.0.0 by default)
 curl -s http://localhost:9099/gpu  # sanity check — JSON with VRAM/power/temp
 ```
-
-To keep it running across reboots, install a systemd service:
 
 ```ini
 # /etc/systemd/system/hchat-agent.service
@@ -212,38 +207,28 @@ WantedBy=multi-user.target
 ```
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now hchat-agent
+sudo systemctl daemon-reload && sudo systemctl enable --now hchat-agent
 ```
 
 **4. Reach it from your Mac.**
 
-- **Same network:** use the Spark's hostname/IP — `agent_url = "http://spark:9099"`,
-  `prometheus_url = "http://spark:8000/metrics"`. The agent binds `0.0.0.0`; if
-  the box has a firewall, allow ports `9099` and `8000`.
-- **Not on the same network (or you'd rather not expose ports):** SSH-tunnel and
-  point hChat at `localhost`:
+- **Same network:** use the box's hostname/IP (`agent_url = "http://host:9099"`,
+  `prometheus_url = "http://host:8000/metrics"`); if it has a firewall, allow
+  ports `9099` and the server's metrics port.
+- **Not on the same network:** SSH-tunnel and point hChat at `localhost`:
   ```bash
-  ssh -N -L 9099:localhost:9099 -L 8000:localhost:8000 you@spark
+  ssh -N -L 9099:localhost:9099 -L 8000:localhost:8000 you@host
   ```
-  then use `agent_url = "http://localhost:9099"` and
-  `prometheus_url = "http://localhost:8000/metrics"`.
-
-> The agent serves only GPU stats and has no auth. On an untrusted network, run
-> it with `--bind 127.0.0.1` and reach it through the SSH tunnel above.
-
-**5. Add the endpoint in hChat** (see the vLLM example in the config above):
-`runtime = "vllm"`, `prometheus_url`, `gpu = "agent"`, `agent_url`. Select it in
-the top bar and open **Status** — you'll see decode/TTFT/prefill and requests
-from vLLM, and VRAM/power/temp/util per GPU from the agent.
+  The agent has no auth; on an untrusted network run it with `--bind 127.0.0.1`
+  and reach it through the tunnel.
 
 ## Configuration
 
 Two layers:
 
 - **Global defaults** — `~/.config/hchat/config.toml`: default endpoint, system
-  prompt, sampling params, and saved endpoints (with optional per-endpoint API
-  keys). Edit directly or use the Settings modal. See
+  prompt, sampling params, appearance, hotkeys, and saved endpoints (with optional
+  keys + metrics config). Edit directly or use **Settings** (Cmd/Ctrl+,). See
   [example.config.toml](src-tauri/example.config.toml). Corrupt files are backed
   up rather than silently reset.
 - **Per-conversation overrides** — stored in SQLite alongside messages. Changing
@@ -267,9 +252,10 @@ into `~/.config/hchat/tools/` on first launch:
 | `write_file` | confirm | Writes a file; creates parent dirs |
 | `run_shell` | confirm | Runs a shell command in the working dir; 5-min cap |
 
-`auto` tools run silently; `confirm` tools show an approval card with the full
-args. Each conversation has its own `working_dir` that relative paths resolve
-against (defaults to home).
+`auto` tools run silently; `confirm` tools show an approval card (Approve /
+Approve-all-in-this-conversation / Deny). Each conversation has its own
+`working_dir` that relative paths resolve against (defaults to home). Tool chains
+are capped at 8 cycles per turn.
 
 Define your own by dropping a `.toml` into `~/.config/hchat/tools/`:
 
@@ -287,20 +273,21 @@ safety = "confirm"
 
 Restart to load new/edited tools.
 
-## Keybindings
+## Keyboard & commands
+
+Shortcuts are rebindable in **Settings → Keyboard** (`mod` = Cmd on macOS /
+Ctrl elsewhere). Defaults:
 
 | Key | Action |
 |---|---|
-| Enter | Send message |
-| Shift+Enter | New line |
-| Cmd/Ctrl+F | Find in conversation |
-| Cmd/Ctrl+Enter | Save & resend (while editing a message) |
+| Enter / Shift+Enter | Send / newline |
+| `mod`+N | New chat |
+| `mod`+L | Focus the message input |
+| `mod`+F | Find in conversation |
+| `mod`+J | Toggle the artifacts panel |
+| `mod`+, | Open settings |
+| `mod`+. | Stop generation |
+| `mod`+Enter | Save & resend (while editing a message) |
 
 **Slash commands** (type in the composer): `/model <name>`, `/temp <0..2>`,
-`/system <text>`, `/clear`, `/copy`, `/help` (with aliases `/m /t /sys /new /?`).
-
-## Not yet re-ported from the egui app
-
-A few smaller items remain: the "approve all in this conversation" tool allowlist
-(approvals are currently per-call), a one-click markdown-export button (the
-backend command exists), and per-message hover timestamps.
+`/system <text>`, `/clear`, `/copy`, `/help` (aliases `/m /t /sys /new /?`).
