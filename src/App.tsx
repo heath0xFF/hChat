@@ -18,8 +18,10 @@ import type {
 import { Sidebar, type View } from "./components/Sidebar";
 import { ChatView } from "./components/ChatView";
 import { StatusView, type LiveMetrics } from "./components/StatusView";
+import { UsageView } from "./components/UsageView";
 import { SettingsModal } from "./components/SettingsModal";
 import { ArtifactPanel } from "./components/ArtifactPanel";
+import { RightDock, type DockTab } from "./components/RightDock";
 import type { ApprovalDecision } from "./components/ApprovalCard";
 import type { ChatMessage } from "./components/MessageItem";
 import {
@@ -146,7 +148,9 @@ export function App() {
   });
   const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const [currentArtifact, setCurrentArtifact] = useState<Artifact | null>(null);
-  const [artifactOpen, setArtifactOpen] = useState(false);
+  // The right dock hosts Status + Artifacts as tabs (open while chatting).
+  const [dockOpen, setDockOpen] = useState(false);
+  const [dockTab, setDockTab] = useState<DockTab>("status");
   const [composerInput, setComposerInput] = useState("");
   const [tokenCount, setTokenCount] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
@@ -159,6 +163,13 @@ export function App() {
   const hotkeyRef = useRef<(e: KeyboardEvent) => void>(() => {});
   const viewRef = useRef(view);
   viewRef.current = view;
+  // Metrics should update (and the poller stay pointed at the status endpoint)
+  // whenever the live metrics are visible — the full-page Status view OR the
+  // right dock's Status tab. Kept in a ref so the "metrics" listener stays
+  // stable while reading the latest value.
+  const metricsVisible = view === "status" || (dockOpen && dockTab === "status");
+  const metricsVisibleRef = useRef(metricsVisible);
+  metricsVisibleRef.current = metricsVisible;
 
   const refreshConversations = useCallback(async () => {
     setConversations(await api.listConversations());
@@ -201,10 +212,10 @@ export function App() {
   // not only when we send a request).
   useEffect(() => {
     const un = listen<MetricsSnapshot>("metrics", (e) => {
-      // Only update metrics state while the Status view is visible — otherwise
-      // the ~1.5s poller would re-render the chat (and re-paint code blocks)
-      // every tick for no visible benefit.
-      if (viewRef.current !== "status") return;
+      // Only update metrics state while the live metrics are visible (Status
+      // page or the dock's Status tab) — otherwise the ~1.5s poller would
+      // re-render the chat every tick for no visible benefit.
+      if (!metricsVisibleRef.current) return;
       const snap = e.payload;
       setSnapshot(snap);
       const decode = snap.server?.decode_tok_s ?? null;
@@ -239,9 +250,9 @@ export function App() {
   // Point the metrics poller at the Status-selected endpoint while on the Status
   // view, otherwise at the active conversation's endpoint.
   useEffect(() => {
-    const ep = view === "status" ? statusEndpoint : settings?.endpoint;
+    const ep = metricsVisible ? statusEndpoint : settings?.endpoint;
     if (ep) void api.setMetricsTarget(ep);
-  }, [view, statusEndpoint, settings?.endpoint]);
+  }, [metricsVisible, statusEndpoint, settings?.endpoint]);
 
   // Clear the metric histories when the Status endpoint changes so charts
   // reflect the newly-selected device.
@@ -281,9 +292,9 @@ export function App() {
     setArtifacts(collectArtifacts(messages));
   }, [messages]);
 
-  // Close the artifact panel when leaving a chat (switch conversation or view).
+  // Close the right dock when leaving a chat (switch conversation or view).
   useEffect(() => {
-    setArtifactOpen(false);
+    setDockOpen(false);
   }, [activeConvId, view]);
 
   // Debounced live token count of the composer.
@@ -382,20 +393,36 @@ export function App() {
       const match =
         artifacts.find((a) => a.code === code) ?? makeArtifact(code, lang);
       setCurrentArtifact(match);
-      setArtifactOpen(true);
+      setDockTab("artifacts");
+      setDockOpen(true);
     },
     [artifacts],
   );
 
+  // Toggle the dock's Artifacts tab (the chat-topbar ◧ button + hotkey).
   const toggleArtifacts = () => {
-    if (artifactOpen) {
-      setArtifactOpen(false);
+    if (dockOpen && dockTab === "artifacts") {
+      setDockOpen(false);
       return;
     }
-    if (!currentArtifact && artifacts.length > 0) {
+    // Nothing to show — don't open an empty Artifacts tab (the hotkey can fire
+    // with no artifacts present).
+    if (!currentArtifact && artifacts.length === 0) return;
+    if (!currentArtifact) {
       setCurrentArtifact(artifacts[artifacts.length - 1]);
     }
-    if (artifacts.length > 0 || currentArtifact) setArtifactOpen(true);
+    setDockTab("artifacts");
+    setDockOpen(true);
+  };
+
+  // Toggle the dock's Status tab (watch live metrics while chatting).
+  const toggleStatusDock = () => {
+    if (dockOpen && dockTab === "status") {
+      setDockOpen(false);
+      return;
+    }
+    setDockTab("status");
+    setDockOpen(true);
   };
 
   const newChat = () => {
@@ -637,7 +664,8 @@ export function App() {
         const preview = [...collectArtifacts(msgs)].reverse().find(isPreviewable);
         if (preview) {
           setCurrentArtifact(preview);
-          setArtifactOpen(true);
+          setDockTab("artifacts");
+          setDockOpen(true);
         }
       }
       refreshConversations();
@@ -809,7 +837,8 @@ export function App() {
       });
   };
 
-  const showArtifact = artifactOpen && currentArtifact;
+  // The dock only docks alongside the chat (not the full-page Status/Usage).
+  const showDock = dockOpen && view === "chat";
 
   const startResize = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -828,7 +857,7 @@ export function App() {
     document.addEventListener("mouseup", onUp);
   };
 
-  const gridTemplateColumns = showArtifact
+  const gridTemplateColumns = showDock
     ? `${railWidth}px minmax(0, 1fr) minmax(380px, 0.9fr)`
     : `${railWidth}px 1fr`;
 
@@ -898,6 +927,8 @@ export function App() {
             metrics={metrics}
             snapshot={snapshot}
           />
+        ) : view === "usage" ? (
+          <UsageView />
         ) : (
           <ChatView
             config={config}
@@ -930,23 +961,49 @@ export function App() {
             canExport={activeConvId != null}
             onOpenArtifact={openArtifact}
             artifactCount={artifacts.length}
-            artifactOpen={artifactOpen}
+            artifactOpen={dockOpen && dockTab === "artifacts"}
             onToggleArtifacts={toggleArtifacts}
+            statusDockOpen={dockOpen && dockTab === "status"}
+            onToggleStatus={toggleStatusDock}
           />
         )}
       </div>
 
-      {showArtifact && currentArtifact && (
-        <ArtifactPanel
-          artifact={currentArtifact}
-          artifacts={artifacts.length > 0 ? artifacts : [currentArtifact]}
-          onSelect={(id) => {
-            const a =
-              artifacts.find((x) => x.id === id) ??
-              (currentArtifact.id === id ? currentArtifact : null);
-            if (a) setCurrentArtifact(a);
-          }}
-          onClose={() => setArtifactOpen(false)}
+      {showDock && (
+        <RightDock
+          tab={dockTab}
+          onTab={setDockTab}
+          onClose={() => setDockOpen(false)}
+          hasArtifacts={artifacts.length > 0 || currentArtifact != null}
+          artifactCount={artifacts.length}
+          status={
+            <StatusView
+              endpoints={config.saved_endpoints.map((e) => e.url)}
+              endpoint={statusEndpoint}
+              liveEndpoint={settings.endpoint}
+              onChangeEndpoint={setStatusEndpoint}
+              metrics={metrics}
+              snapshot={snapshot}
+            />
+          }
+          artifacts={
+            currentArtifact ? (
+              <ArtifactPanel
+                embedded
+                artifact={currentArtifact}
+                artifacts={artifacts.length > 0 ? artifacts : [currentArtifact]}
+                onSelect={(id) => {
+                  const a =
+                    artifacts.find((x) => x.id === id) ??
+                    (currentArtifact.id === id ? currentArtifact : null);
+                  if (a) setCurrentArtifact(a);
+                }}
+                onClose={() => setDockOpen(false)}
+              />
+            ) : (
+              <div className="dock-empty">No artifacts in this chat yet.</div>
+            )
+          }
         />
       )}
 

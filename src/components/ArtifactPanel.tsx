@@ -10,9 +10,18 @@ interface Props {
   artifacts: Artifact[];
   onSelect: (id: string) => void;
   onClose: () => void;
+  /** When embedded in the right dock, the dock's tab bar owns the close
+   *  button, so suppress this panel's own. */
+  embedded?: boolean;
 }
 
-export function ArtifactPanel({ artifact, artifacts, onSelect, onClose }: Props) {
+export function ArtifactPanel({
+  artifact,
+  artifacts,
+  onSelect,
+  onClose,
+  embedded,
+}: Props) {
   const previewable = isPreviewable(artifact);
   const [view, setView] = useState<"preview" | "code">(
     previewable ? "preview" : "code",
@@ -55,9 +64,11 @@ export function ArtifactPanel({ artifact, artifacts, onSelect, onClose }: Props)
               </button>
             </div>
           )}
-          <button className="icon-btn" title="Close" onClick={onClose}>
-            ✕
-          </button>
+          {!embedded && (
+            <button className="icon-btn" title="Close" onClick={onClose}>
+              ✕
+            </button>
+          )}
         </div>
       </div>
 

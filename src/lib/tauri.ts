@@ -12,6 +12,7 @@ import type {
   ProjectDto,
   SendParams,
   SiblingInfo,
+  UsageStats,
 } from "../types";
 
 export const api = {
@@ -30,6 +31,8 @@ export const api = {
   setPinned: (id: number, pinned: boolean) =>
     invoke<void>("set_pinned", { id, pinned }),
 
+  usageStats: () => invoke<UsageStats>("usage_stats"),
+  clearUsage: () => invoke<void>("clear_usage"),
   listProjects: () => invoke<ProjectDto[]>("list_projects"),
   createProject: (name: string) => invoke<number>("create_project", { name }),
   renameProject: (id: number, name: string) =>

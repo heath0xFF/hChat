@@ -61,6 +61,8 @@ export interface Config {
   stop_sequences: string[];
   hotkeys: Hotkeys;
   mcp_servers?: McpServer[];
+  /** Days of usage history to keep (0 = forever). */
+  usage_retention_days: number;
 }
 
 export interface ConversationDto {
@@ -75,6 +77,32 @@ export interface ProjectDto {
   id: number;
   name: string;
   pinned: boolean;
+}
+
+export interface UsageByModel {
+  model: string;
+  endpoint: string;
+  requests: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  avg_ttft_ms: number | null;
+  avg_decode_tok_s: number | null;
+}
+
+export interface UsageDaily {
+  date: string;
+  total_tokens: number;
+}
+
+export interface UsageStats {
+  total_requests: number;
+  ok_requests: number;
+  prompt_tokens: number;
+  completion_tokens: number;
+  total_tokens: number;
+  by_model: UsageByModel[];
+  daily: UsageDaily[];
 }
 
 export interface ToolCallDto {

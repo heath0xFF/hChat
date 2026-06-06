@@ -38,6 +38,13 @@ pub fn run() {
 
             // Connect MCP servers in the background.
             let state = app.state::<AppState>();
+
+            // Enforce the usage retention window once at startup.
+            let retention = state.config.lock().unwrap().usage_retention_days;
+            if retention > 0 {
+                state.storage.lock().unwrap().prune_usage(retention);
+            }
+
             let mcp = state.mcp.clone();
             let servers = state.config.lock().unwrap().mcp_servers.clone();
             if !servers.is_empty() {
@@ -56,6 +63,8 @@ pub fn run() {
             commands::delete_conversation,
             commands::rename_conversation,
             commands::set_pinned,
+            commands::usage_stats,
+            commands::clear_usage,
             commands::list_projects,
             commands::create_project,
             commands::rename_project,

@@ -40,6 +40,8 @@ interface Props {
   artifactCount: number;
   artifactOpen: boolean;
   onToggleArtifacts: () => void;
+  statusDockOpen: boolean;
+  onToggleStatus: () => void;
   presets: PresetDto[];
   onApplyPreset: (p: PresetDto) => void;
   onSavePreset: (name: string) => void;
@@ -273,6 +275,13 @@ export function ChatView(props: Props) {
             ✕
           </button>
         )}
+        <button
+          className={`tbtn${props.statusDockOpen ? " accent" : ""}`}
+          title="Status panel"
+          onClick={props.onToggleStatus}
+        >
+          ⚡
+        </button>
         {props.artifactCount > 0 && (
           <button
             className={`tbtn${props.artifactOpen ? " accent" : ""}`}

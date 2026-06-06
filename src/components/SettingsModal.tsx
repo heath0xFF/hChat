@@ -137,6 +137,24 @@ export function SettingsModal({ config, onClose, onSave }: Props) {
                   onChange={(e) => set("system_prompt", e.target.value)}
                 />
               </div>
+              <div className="field">
+                <label>Usage history retention (days)</label>
+                <input
+                  type="number"
+                  min={0}
+                  value={c.usage_retention_days ?? 0}
+                  onChange={(e) =>
+                    set(
+                      "usage_retention_days",
+                      Math.max(0, Math.floor(Number(e.target.value) || 0)),
+                    )
+                  }
+                />
+                <div className="field-hint">
+                  Prune recorded usage older than this. 0 keeps everything
+                  forever.
+                </div>
+              </div>
             </>
           )}
 

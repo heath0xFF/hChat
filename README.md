@@ -1,8 +1,8 @@
 # hChat
 
 A local-LLM **workstation** for your desktop: a fast chat client, a live
-inference-metrics dashboard, and an artifact-rendering panel — over any
-OpenAI-compatible endpoint.
+inference-metrics dashboard, an artifact-rendering panel, and per-request usage
+tracking — over any OpenAI-compatible endpoint.
 
 Point it at a remote **DGX Spark** running vLLM, your MacBook running **oMLX**
 (MLX) and **llama.cpp** (GGUF), **OpenRouter**, **LM Studio**, **Ollama**, or
@@ -24,7 +24,12 @@ Electron app.
   Apple-Silicon GPU
   stats via [macmon](https://github.com/vladkens/macmon) (no sudo); remote NVIDIA
   boxes via the bundled **`hchat-agent`**; vLLM / llama.cpp / llama-swap via
-  Prometheus
+  Prometheus. View it full-page, or **dock it beside the chat** to watch a backend
+  while you work
+- **Usage history** — every turn's tokens, TTFT, and tok/s are recorded locally;
+  the **Usage** page totals them with a by-model breakdown and a tokens-by-day
+  chart. Optional retention window (`usage_retention_days`); your data only, never
+  uploaded
 - **Native tool calling** — the model can read files, search code, run shell
   commands, and write into a working directory. Five tools ship pre-configured;
   destructive ones prompt for approval (with "approve all in this conversation").
@@ -36,7 +41,8 @@ Electron app.
   resources: `commands/` become slash commands, `skills/` are model- or
   manually-invoked, shared with your other agents (user- and project-level)
 - **Artifacts panel** — renders the HTML (live, sandboxed iframe), SVG, Markdown,
-  Mermaid diagrams, and code your models produce, with a preview/source toggle
+  Mermaid diagrams, and code your models produce, with a preview/source toggle;
+  shares a collapsible right-side dock with the live Status panel
 - **Branching** — regenerate or edit any message to fork a sibling; navigate
   with `◀ N/M ▶`
 - **Attachments** — drag-drop / paste images for vision models; drop text files to
@@ -64,7 +70,7 @@ machines unless you configure a cloud endpoint.
 ```mermaid
 flowchart LR
   subgraph app["hChat desktop app (Tauri)"]
-    ui["React UI<br/>chat · dashboard · artifacts"]
+    ui["React UI<br/>chat · dashboard · artifacts · usage"]
     core["Rust core<br/>streaming · SQLite · tools · metrics poller"]
     ui <--> core
   end
@@ -175,9 +181,12 @@ but no model is loaded/pulled.
 ## Metrics dashboard
 
 The **Status** view shows live metrics for a backend you pick from its own
-endpoint dropdown (independent of the active chat). Per-request decode/TTFT/
-prefill is measured client-side; richer stats are opt-in per endpoint (set them
-in **Settings → Endpoints** or `config.toml`):
+endpoint dropdown (independent of the active chat). Open it full-page from the
+left rail, or hit the **⚡** button in the chat top bar to **dock it on the right**
+as a tab next to Artifacts — so you can watch decode tok/s, GPU power, and VRAM
+while a model is replying. Per-request decode/TTFT/prefill is measured
+client-side; richer stats are opt-in per endpoint (set them in
+**Settings → Endpoints** or `config.toml`):
 
 ```toml
 # llama.cpp on this Mac (start it with `llama-server --metrics`)
@@ -269,13 +278,35 @@ sudo systemctl daemon-reload && sudo systemctl enable --now hchat-agent
   The agent has no auth; on an untrusted network run it with `--bind 127.0.0.1`
   and reach it through the tunnel.
 
+## Usage history
+
+Every completed turn is recorded to a local SQLite table — endpoint, model,
+prompt/completion tokens, TTFT, and decode tok/s (tool-loop continuations each
+count as their own turn). The **Usage** page in the left rail aggregates it:
+
+- **Totals** — tokens, requests, prompt vs. completion, and success rate
+- **By model** — requests, tokens, average TTFT and tok/s per model + endpoint
+- **Tokens by day** — a daily chart of total token throughput
+
+It's your data only and never leaves your machine. **Refresh** re-reads it;
+**Clear** wipes the whole history.
+
+By default usage is kept forever. Set a retention window to prune old rows
+automatically (on startup and whenever the Usage page loads) via
+**Settings → General** or `config.toml`:
+
+```toml
+usage_retention_days = 90   # delete usage older than 90 days; 0 = keep forever
+```
+
 ## Configuration
 
 Two layers:
 
 - **Global defaults** — `~/.config/hchat/config.toml`: default endpoint, system
-  prompt, sampling params, appearance, hotkeys, and saved endpoints (with optional
-  keys + metrics config). Edit directly or use **Settings** (Cmd/Ctrl+,). See
+  prompt, sampling params, appearance, hotkeys, usage retention, and saved
+  endpoints (with optional keys + metrics config). Edit directly or use
+  **Settings** (Cmd/Ctrl+,). See
   [example.config.toml](src-tauri/example.config.toml). Corrupt files are backed
   up rather than silently reset.
 - **Per-conversation overrides** — stored in SQLite alongside messages. Changing
@@ -415,7 +446,7 @@ Ctrl elsewhere). Defaults:
 | `mod`+N | New chat |
 | `mod`+L | Focus the message input |
 | `mod`+F | Find in conversation |
-| `mod`+J | Toggle the artifacts panel |
+| `mod`+J | Toggle the Artifacts tab in the right dock |
 | `mod`+, | Open settings |
 | `mod`+. | Stop generation |
 | `mod`+Enter | Save & resend (while editing a message) |

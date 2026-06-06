@@ -1189,6 +1189,126 @@ select.model-select {
   height: auto;
 }
 
+/* ---------- right dock (Status | Artifacts tabs) ---------- */
+.dock {
+  border-left: 1px solid var(--border-soft);
+  background: var(--bg-deep);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-width: 0;
+}
+.dock-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-soft);
+  min-height: 44px;
+}
+.dock-tab {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  color: var(--dim);
+  font-size: 12.5px;
+  padding: 5px 11px;
+  cursor: pointer;
+}
+.dock-tab:hover:not(:disabled) {
+  color: var(--text);
+}
+.dock-tab.active {
+  background: var(--panel-3);
+  color: var(--text);
+}
+.dock-tab:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.dock-close {
+  background: transparent;
+  border: none;
+  color: var(--dim);
+  font-size: 13px;
+  padding: 4px 8px;
+  cursor: pointer;
+  border-radius: 6px;
+}
+.dock-close:hover {
+  color: var(--text);
+  background: var(--panel-2);
+}
+.dock-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+/* The dock hosts the artifact panel without its own chrome border. */
+.dock-body .artifact-panel {
+  border-left: none;
+  flex: 1;
+}
+.dock-empty {
+  padding: 24px;
+  color: var(--dim);
+  font-size: 13px;
+}
+/* The metrics dashboard reflows tighter inside the narrow dock. */
+.dock .status {
+  padding: 8px 16px 32px;
+}
+.dock .tiles {
+  grid-template-columns: repeat(3, 1fr);
+  row-gap: 16px;
+}
+.dock .tile:nth-child(4) {
+  border-left: none;
+  padding-left: 0;
+}
+.dock .charts {
+  grid-template-columns: 1fr;
+}
+
+/* ---------- usage table ---------- */
+.usage-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12.5px;
+}
+.usage-table th,
+.usage-table td {
+  text-align: left;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border-soft);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 220px;
+}
+.usage-table th {
+  color: var(--dim);
+  font-weight: 500;
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.usage-table td.num,
+.usage-table th.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.usage-table tbody tr:hover {
+  background: var(--panel-2);
+}
+.usage-empty {
+  color: var(--dim);
+  text-align: center !important;
+  padding: 20px !important;
+}
+
 /* ---------- modal ---------- */
 .modal-backdrop {
   position: fixed;
@@ -1326,6 +1446,12 @@ select.model-select {
   text-transform: uppercase;
   color: var(--dim);
   margin-bottom: 6px;
+}
+.field-hint {
+  margin-top: 5px;
+  font-size: 11.5px;
+  color: var(--dim);
+  line-height: 1.4;
 }
 .field input,
 .field textarea,

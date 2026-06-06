@@ -212,6 +212,11 @@ pub struct Config {
     /// MCP servers to connect to.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub mcp_servers: Vec<McpServer>,
+    /// Retention window for the recorded usage history, in days. `0` (the
+    /// default) keeps everything forever; any positive value prunes usage rows
+    /// older than that many days (on startup and whenever the Usage page loads).
+    #[serde(default)]
+    pub usage_retention_days: u32,
 }
 
 impl Default for Config {
@@ -235,6 +240,7 @@ impl Default for Config {
             stop_sequences: Vec::new(),
             hotkeys: Hotkeys::default(),
             mcp_servers: Vec::new(),
+            usage_retention_days: 0,
         }
     }
 }

@@ -41,6 +41,35 @@ pub struct ProjectDto {
 }
 
 #[derive(Serialize)]
+pub struct UsageStatsDto {
+    pub total_requests: i64,
+    pub ok_requests: i64,
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+    pub total_tokens: i64,
+    pub by_model: Vec<UsageByModelDto>,
+    pub daily: Vec<UsageDailyDto>,
+}
+
+#[derive(Serialize)]
+pub struct UsageByModelDto {
+    pub model: String,
+    pub endpoint: String,
+    pub requests: i64,
+    pub prompt_tokens: i64,
+    pub completion_tokens: i64,
+    pub total_tokens: i64,
+    pub avg_ttft_ms: Option<f64>,
+    pub avg_decode_tok_s: Option<f64>,
+}
+
+#[derive(Serialize)]
+pub struct UsageDailyDto {
+    pub date: String,
+    pub total_tokens: i64,
+}
+
+#[derive(Serialize)]
 pub struct ToolCallDto {
     pub id: String,
     pub name: String,
@@ -308,6 +337,52 @@ pub fn list_conversations(state: State<'_, AppState>) -> Vec<ConversationDto> {
             }
         })
         .collect()
+}
+
+// ---------- usage ----------
+
+#[tauri::command]
+pub fn usage_stats(state: State<'_, AppState>) -> UsageStatsDto {
+    let retention = state.config.lock().unwrap().usage_retention_days;
+    let s = {
+        let storage = state.storage.lock().unwrap();
+        storage.prune_usage(retention);
+        storage.usage_stats()
+    };
+    UsageStatsDto {
+        total_requests: s.total_requests,
+        ok_requests: s.ok_requests,
+        prompt_tokens: s.prompt_tokens,
+        completion_tokens: s.completion_tokens,
+        total_tokens: s.total_tokens,
+        by_model: s
+            .by_model
+            .into_iter()
+            .map(|m| UsageByModelDto {
+                model: m.model,
+                endpoint: m.endpoint,
+                requests: m.requests,
+                prompt_tokens: m.prompt_tokens,
+                completion_tokens: m.completion_tokens,
+                total_tokens: m.total_tokens,
+                avg_ttft_ms: m.avg_ttft_ms,
+                avg_decode_tok_s: m.avg_decode_tok_s,
+            })
+            .collect(),
+        daily: s
+            .daily
+            .into_iter()
+            .map(|d| UsageDailyDto {
+                date: d.date,
+                total_tokens: d.total_tokens,
+            })
+            .collect(),
+    }
+}
+
+#[tauri::command]
+pub fn clear_usage(state: State<'_, AppState>) {
+    state.storage.lock().unwrap().clear_usage();
 }
 
 // ---------- projects ----------
@@ -904,6 +979,22 @@ async fn run_turn(
         let outcome =
             stream_once(gp, wire, api_key.clone(), tools_api.clone(), cancel.clone(), on_event)
                 .await;
+        // Record this turn's token spend for the Usage page (tool-loop
+        // continuations each get their own row; failed turns count as !ok so
+        // the success rate is meaningful).
+        {
+            let storage = state.storage.lock().unwrap();
+            storage.record_usage(&crate::storage::UsageRecord {
+                endpoint: &gp.endpoint,
+                model: &gp.model,
+                prompt_tokens: outcome.prompt_tokens,
+                completion_tokens: outcome.completion_tokens,
+                ttft_ms: outcome.ttft_ms,
+                decode_tok_s: outcome.decode_tok_s,
+                ok: !outcome.errored,
+            });
+        }
+
         if outcome.errored {
             errored = true;
             break;
@@ -1099,6 +1190,10 @@ struct StreamOutcome {
     reasoning: String,
     tool_calls: Vec<ToolCall>,
     errored: bool,
+    prompt_tokens: Option<u32>,
+    completion_tokens: Option<u32>,
+    ttft_ms: Option<f64>,
+    decode_tok_s: Option<f64>,
 }
 
 /// Run one streaming completion, forwarding tokens/reasoning/usage/metrics to
@@ -1208,6 +1303,10 @@ async fn stream_once(
         reasoning,
         tool_calls,
         errored,
+        prompt_tokens: usage_prompt,
+        completion_tokens: usage_completion,
+        ttft_ms,
+        decode_tok_s,
     }
 }
 

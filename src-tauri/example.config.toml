@@ -62,6 +62,12 @@ max_tokens = 2048
 # Default: false
 use_max_tokens = false
 
+# usage_retention_days: How many days of recorded usage history (the Usage page)
+# to keep. Rows older than this are pruned on startup and whenever the Usage
+# page loads. 0 keeps everything forever.
+# Default: 0
+usage_retention_days = 0
+
 # --- Advanced sampling (all optional — leave commented to use model defaults) ---
 
 # top_p: Nucleus sampling. Restricts token choices to the top-p probability mass.
