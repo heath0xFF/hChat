@@ -1,0 +1,6 @@
+ok those three minor things for sure. i'd also like two things: 
+
+1. a settings page in the app that has all possible configuration items, and writes to config.toml, and lauches via cmd/ctrl + comma (,) 
+2. configurable hotkeys in the settings window (chat input focus, cmd/ctrl + n for new chat, etc.) 
+
+also -- i want the readme to not reflect anything about this rewrite, just the overall project, how it works (maybe a mermaid diagram), and setup instructions.

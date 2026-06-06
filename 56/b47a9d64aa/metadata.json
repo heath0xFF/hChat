@@ -1,0 +1,34 @@
+{
+  "cli_version": "0.7.3",
+  "checkpoint_id": "56b47a9d64aa",
+  "strategy": "manual-commit",
+  "branch": "rewrite-tauri",
+  "checkpoints_count": 0,
+  "files_touched": [
+    "src-tauri/src/commands.rs",
+    "src-tauri/src/lib.rs",
+    "src-tauri/src/state.rs",
+    "src/App.tsx",
+    "src/components/ApprovalCard.tsx",
+    "src/components/ChatView.tsx",
+    "src/components/MessageItem.tsx",
+    "src/lib/tauri.ts",
+    "src/styles.css",
+    "src/types.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/56/b47a9d64aa/0/metadata.json",
+      "transcript": "/56/b47a9d64aa/0/full.jsonl",
+      "content_hash": "/56/b47a9d64aa/0/content_hash.txt",
+      "prompt": "/56/b47a9d64aa/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 1275,
+    "cache_creation_tokens": 27225,
+    "cache_read_tokens": 23885858,
+    "output_tokens": 23255,
+    "api_call_count": 40
+  }
+}
