@@ -1,0 +1,15 @@
+i want to rewrite hchat. i want it to be more like https://github.com/sybil-solutions/vllm-studio. i can share screenshots of it as well, too, if that would help. but the idea is that i want to be able to use the models on my dgx spark AS WELL AS being able to use local models on my macbook pro via omlx and vllm (omlx for mlx models and vllm for ggufs). i want insight into decode, ttft, prefill, requests, vram, and power as well. like this:  [Image #1] and i'd like have a markdown rendering left sidebar like the cluade desktop app so i can view the artifacts that my models are making.
+
+---
+
+i want to rewrite hchat. i want it to be more like https://github.com/sybil-solutions/vllm-studio. i can share screenshots of it as well, too, if that would help. but the idea is that i want to be able to use the models on my dgx spark AS WELL AS being able to use local models on my macbook pro via omlx and vllm (omlx for mlx models and vllm for ggufs). i want insight into decode, ttft, prefill, requests, vram, and power as well. like this:  [Image #1] and i'd like have a markdown rendering left sidebar like the cluade desktop app so i can view the artifacts that my models are making.
+
+---
+
+<task-notification>
+<task-id>bdeau4mor</task-id>
+<tool-use-id>toolu_01VPgaQ1PDnvnY3gpCFwTCyg</tool-use-id>
+<output-file>/private/tmp/claude-501/-Users-heath-code-hChat/3f04eee0-fabc-48a5-874d-70461e02999f/tasks/bdeau4mor.output</output-file>
+<status>completed</status>
+<summary>Background command "Launch Tauri dev (background)" completed (exit code 0)</summary>
+</task-notification>
