@@ -1,0 +1,9 @@
+merge to main
+
+---
+
+ok hell yeah. i think what i want now is a review of the README
+
+---
+
+yes apply fixes, and there is still a flicker in the code boxes in chats... it seems to be consistently every 1 second
