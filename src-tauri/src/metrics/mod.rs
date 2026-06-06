@@ -73,6 +73,7 @@ fn runtime_label(r: Runtime) -> &'static str {
         Runtime::Vllm => "VLLM",
         Runtime::Omlx => "OMLX",
         Runtime::LlamaCpp => "LLAMA.CPP",
+        Runtime::LlamaSwap => "LLAMA-SWAP",
         Runtime::Openai => "OPENAI",
     }
 }
@@ -112,9 +113,11 @@ pub fn start(app: AppHandle) -> Arc<Mutex<Option<MetricsTarget>>> {
                 match client.get(purl).send().await {
                     Ok(r) if r.status().is_success() => {
                         let body = r.text().await.unwrap_or_default();
+                        let (all, bare) = prometheus::parse(&body);
                         let cur = prometheus::Sample {
                             at: Instant::now(),
-                            values: prometheus::parse(&body),
+                            all,
+                            bare,
                         };
                         let prev_sample = prev
                             .as_ref()

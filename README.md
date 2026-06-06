@@ -130,8 +130,10 @@ gpu = "agent"
 agent_url = "http://spark:9099"
 ```
 
-- **`runtime`** — `vllm` | `omlx` | `llamacpp` | `openai`
-- **`prometheus_url`** — scraped for decode/prefill tok/s, TTFT, requests, KV cache
+- **`runtime`** — `vllm` | `omlx` | `llamacpp` | `llamaswap` | `openai`
+- **`prometheus_url`** — scraped for decode/prefill tok/s, TTFT, requests, KV cache.
+  For **llama-swap**, set `runtime = "llamaswap"` and point this at llama-swap's
+  own `/metrics` (it exports `llama_swap_*` token-rate metrics)
 - **`gpu`** — `macmon` (Apple Silicon, no sudo) | `agent` (remote NVIDIA) | `none`.
   Local endpoints on macOS default to `macmon` automatically, so VRAM/power/temp
   show up with no config.
@@ -144,11 +146,21 @@ unified LPDDR5X, so memory shows as `[Not Supported]`. The bundled
 *and* `/proc/meminfo` (unified VRAM) and serving them as JSON. It's a single
 zero-dependency Rust binary (~450 KB).
 
-**1. Make sure vLLM is exposing metrics.** vLLM serves Prometheus metrics at
-`/metrics` on its API port by default — no extra flags needed. Confirm:
+The agent only reports GPU/system stats, so it's **independent of your inference
+server** — it works the same whether the Spark runs vLLM, llama.cpp, or
+**llama-swap**. The VRAM/power/temp panel and chat work regardless; the
+`prometheus_url` just adds server-side throughput tiles.
+
+**1. (Optional) Point `prometheus_url` at your server's metrics.**
+- **vLLM** serves Prometheus at `/metrics` on its API port by default
+  (`http://spark:8000/metrics`, `runtime = "vllm"`).
+- **llama-swap** has its own `/metrics` (`http://spark:8080/metrics`,
+  `runtime = "llamaswap"`) — it swaps models by name and aggregates token-rate
+  metrics across them.
+- **plain llama.cpp** needs `llama-server --metrics` (`runtime = "llamacpp"`).
 
 ```bash
-curl -s http://localhost:8000/metrics | head    # on the Spark
+curl -s http://localhost:8080/metrics | head    # on the Spark (llama-swap)
 ```
 
 **2. Build the agent on the Spark.** It needs the Rust toolchain

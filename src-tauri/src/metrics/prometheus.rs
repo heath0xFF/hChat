@@ -7,26 +7,38 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::time::Instant;
 
-/// Parse a Prometheus text body into `metric_name -> summed value`. Labels are
-/// stripped and values for the same base name are summed (e.g. per-GPU or
-/// per-finish-reason series collapse into one number). Histogram `_sum` /
-/// `_count` suffixes are kept as distinct names.
-pub fn parse(body: &str) -> HashMap<String, f64> {
-    let mut out: HashMap<String, f64> = HashMap::new();
+/// Parse a Prometheus text body into two maps keyed by metric base name:
+/// - `all`: values summed across all label sets (right for vLLM, whose series
+///   are split by `model_name`/`gpu`/`finish_reason` and have no global line).
+/// - `bare`: only the value of the unlabeled (global-aggregate) series, when
+///   present (right for llama-swap, which emits both a global line and per-model
+///   lines — summing would double-count).
+///
+/// Histogram `_sum` / `_count` suffixes are kept as distinct names.
+pub fn parse(body: &str) -> (HashMap<String, f64>, HashMap<String, f64>) {
+    let mut all: HashMap<String, f64> = HashMap::new();
+    let mut bare: HashMap<String, f64> = HashMap::new();
     for line in body.lines() {
         let line = line.trim();
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
         // `name{labels} value [timestamp]` or `name value`
-        let name_end = line.find('{').unwrap_or_else(|| {
-            line.find(char::is_whitespace).unwrap_or(line.len())
-        });
+        let brace = line.find('{');
+        let ws = line.find(char::is_whitespace);
+        let name_end = match (brace, ws) {
+            (Some(b), Some(w)) => b.min(w),
+            (Some(b), None) => b,
+            (None, Some(w)) => w,
+            (None, None) => line.len(),
+        };
         let name = &line[..name_end];
-        // Value is the last whitespace-separated token before an optional ts;
-        // simplest: take the token right after the closing `}` or the name.
-        let rest = if let Some(close) = line[name_end..].find('}') {
-            &line[name_end + close + 1..]
+        let has_label = brace.is_some_and(|b| ws.is_none_or(|w| b < w));
+        let rest = if has_label {
+            match line[name_end..].find('}') {
+                Some(close) => &line[name_end + close + 1..],
+                None => continue,
+            }
         } else {
             &line[name_end..]
         };
@@ -36,16 +48,22 @@ pub fn parse(body: &str) -> HashMap<String, f64> {
         let Ok(val) = val_str.parse::<f64>() else {
             continue;
         };
-        *out.entry(name.to_string()).or_insert(0.0) += val;
+        *all.entry(name.to_string()).or_insert(0.0) += val;
+        if !has_label {
+            bare.insert(name.to_string(), val);
+        }
     }
-    out
+    (all, bare)
 }
 
 /// A scraped sample plus the time it was taken, for rate derivation.
 #[derive(Clone)]
 pub struct Sample {
     pub at: Instant,
-    pub values: HashMap<String, f64>,
+    /// Summed-across-labels values.
+    pub all: HashMap<String, f64>,
+    /// Unlabeled (global-aggregate) values only.
+    pub bare: HashMap<String, f64>,
 }
 
 #[derive(Default, Clone, Serialize)]
@@ -61,7 +79,7 @@ pub struct ServerStats {
 }
 
 fn rate(prev: &Sample, cur: &Sample, key: &str) -> Option<f64> {
-    let (a, b) = (prev.values.get(key)?, cur.values.get(key)?);
+    let (a, b) = (prev.all.get(key)?, cur.all.get(key)?);
     let dt = cur.at.duration_since(prev.at).as_secs_f64();
     if dt <= 0.0 || b < a {
         return None; // counter reset or no elapsed time
@@ -70,10 +88,10 @@ fn rate(prev: &Sample, cur: &Sample, key: &str) -> Option<f64> {
 }
 
 fn hist_avg_ms(prev: &Sample, cur: &Sample, base: &str) -> Option<f64> {
-    let sum = cur.values.get(&format!("{base}_sum"))?
-        - prev.values.get(&format!("{base}_sum")).copied().unwrap_or(0.0);
-    let count = cur.values.get(&format!("{base}_count"))?
-        - prev.values.get(&format!("{base}_count")).copied().unwrap_or(0.0);
+    let sum = cur.all.get(&format!("{base}_sum"))?
+        - prev.all.get(&format!("{base}_sum")).copied().unwrap_or(0.0);
+    let count = cur.all.get(&format!("{base}_count"))?
+        - prev.all.get(&format!("{base}_count")).copied().unwrap_or(0.0);
     if count <= 0.0 || sum < 0.0 {
         return None;
     }
@@ -83,8 +101,22 @@ fn hist_avg_ms(prev: &Sample, cur: &Sample, base: &str) -> Option<f64> {
 /// Map parsed samples onto `ServerStats` per runtime dialect. `prev` enables
 /// rate/delta derivation for counters and histograms.
 pub fn derive(runtime: Runtime, prev: Option<&Sample>, cur: &Sample) -> ServerStats {
-    let g = |k: &str| cur.values.get(k).copied();
+    let g = |k: &str| cur.all.get(k).copied();
+    // For llama-swap, prefer the unlabeled global series (it also emits
+    // per-model lines; summing both would double-count).
+    let gb = |k: &str| cur.bare.get(k).or_else(|| cur.all.get(k)).copied();
     match runtime {
+        Runtime::LlamaSwap => ServerStats {
+            // llama-swap exposes rolling tok/s gauges (1/5/15-request windows).
+            decode_tok_s: gb("llama_swap_generate_tokens_per_second_last_5"),
+            prefill_tok_s: gb("llama_swap_prompt_tokens_per_second_last_5"),
+            ttft_ms: None,
+            requests_running: None, // no concurrency gauge exposed
+            requests_waiting: None,
+            kv_cache_pct: None,
+            prompt_tokens_total: gb("llama_swap_input_tokens_total"),
+            generation_tokens_total: gb("llama_swap_output_tokens_total"),
+        },
         Runtime::Vllm => ServerStats {
             decode_tok_s: prev.and_then(|p| rate(p, cur, "vllm:generation_tokens_total")),
             prefill_tok_s: prev.and_then(|p| rate(p, cur, "vllm:prompt_tokens_total")),

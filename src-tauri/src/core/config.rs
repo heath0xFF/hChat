@@ -21,6 +21,9 @@ pub enum Runtime {
     Omlx,
     #[serde(rename = "llamacpp")]
     LlamaCpp,
+    /// llama-swap proxy in front of llama.cpp (its own `llama_swap_*` metrics).
+    #[serde(rename = "llamaswap")]
+    LlamaSwap,
     /// Generic OpenAI-compatible (incl. cloud like OpenRouter). No GPU metrics.
     #[default]
     Openai,

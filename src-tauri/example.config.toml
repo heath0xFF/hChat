@@ -108,8 +108,10 @@ url = "http://localhost:1234/v1"
 # --- Metrics (optional, per-endpoint) ---
 #
 # Endpoints can carry extra fields that drive the Status dashboard:
-#   runtime         = "vllm" | "omlx" | "llamacpp" | "openai"  (default "openai")
-#   prometheus_url  = URL of the server's Prometheus /metrics    (vLLM, llama.cpp --metrics)
+#   runtime         = "vllm" | "omlx" | "llamacpp" | "llamaswap" | "openai"
+#                     (default "openai")
+#   prometheus_url  = URL of the server's Prometheus /metrics
+#                     (vLLM; llama.cpp with --metrics; llama-swap's own /metrics)
 #   gpu             = "none" | "macmon" | "agent"                (default "none";
 #                     local endpoints on macOS default to "macmon" automatically)
 #   agent_url       = base URL of an hchat-agent when gpu = "agent"
@@ -130,5 +132,13 @@ url = "http://localhost:1234/v1"
 # url = "http://spark:8000/v1"
 # runtime = "vllm"
 # prometheus_url = "http://spark:8000/metrics"
+# gpu = "agent"
+# agent_url = "http://spark:9099"
+#
+# Remote DGX Spark running llama.cpp behind llama-swap (its own /metrics):
+# [[saved_endpoints]]
+# url = "http://spark:8080/v1"
+# runtime = "llamaswap"
+# prometheus_url = "http://spark:8080/metrics"
 # gpu = "agent"
 # agent_url = "http://spark:9099"
