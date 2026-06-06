@@ -1,0 +1,1 @@
+ok one of the things i don't like about the settings page is the varrying sizes for each menu item, we need to have it be bigger and just scroll for items that render outside of view
