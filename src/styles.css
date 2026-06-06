@@ -19,6 +19,24 @@
   --sans: -apple-system, "Inter", "Segoe UI", system-ui, sans-serif;
 
   --rail-w: 248px;
+  --app-font-size: 14px;
+  --mono-font-size: 13px;
+}
+
+/* Light theme — applied when config.dark_mode is false (`.light` on <html>). */
+:root.light {
+  --bg: #f6f6f7;
+  --panel: #ffffff;
+  --panel-2: #f1f1f3;
+  --panel-3: #e7e7eb;
+  --border: #d6d6dc;
+  --border-soft: #e6e6ea;
+  --text: #1a1a1f;
+  --muted: #5c5c66;
+  --dim: #8a8a94;
+  --faint: #b6b6c0;
+  --accent: #128a82;
+  --accent-dim: #0f6f68;
 }
 
 * {
@@ -36,7 +54,7 @@ body {
   background: var(--bg);
   color: var(--text);
   font-family: var(--sans);
-  font-size: 14px;
+  font-size: var(--app-font-size);
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
   overflow: hidden;
@@ -498,7 +516,7 @@ select.model-select {
   padding: 12px 14px;
   overflow-x: auto;
   font-family: var(--mono);
-  font-size: 12.5px;
+  font-size: var(--mono-font-size);
   line-height: 1.55;
 }
 .code-block pre code {

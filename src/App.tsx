@@ -68,6 +68,25 @@ function combine(reasoning: string, content: string): string {
   return `<think>${reasoning}</think>\n${content}`;
 }
 
+const SANS_STACK = `-apple-system, "Inter", "Segoe UI", system-ui, sans-serif`;
+const MONO_STACK = `"SF Mono", "JetBrains Mono", "Menlo", ui-monospace, monospace`;
+
+function applyAppearance(c: Config) {
+  const root = document.documentElement;
+  root.classList.toggle("light", !c.dark_mode);
+  root.style.setProperty("--app-font-size", `${c.font_size}px`);
+  root.style.setProperty("--mono-font-size", `${c.mono_font_size}px`);
+  root.style.setProperty("zoom", String(c.ui_scale));
+  root.style.setProperty(
+    "--sans",
+    c.font_family ? `"${c.font_family}", ${SANS_STACK}` : SANS_STACK,
+  );
+  root.style.setProperty(
+    "--mono",
+    c.mono_font_family ? `"${c.mono_font_family}", ${MONO_STACK}` : MONO_STACK,
+  );
+}
+
 function toChatMessage(m: MessageDto): ChatMessage {
   return {
     id: m.id,
@@ -173,6 +192,11 @@ export function App() {
   useEffect(() => {
     if (settings?.endpoint) void api.setMetricsTarget(settings.endpoint);
   }, [settings?.endpoint]);
+
+  // Apply theme / fonts / UI scale from config.
+  useEffect(() => {
+    if (config) applyAppearance(config);
+  }, [config]);
 
   // Re-collect artifacts whenever the visible message path changes.
   useEffect(() => {

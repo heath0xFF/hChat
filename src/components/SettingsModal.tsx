@@ -161,6 +161,69 @@ export function SettingsModal({ config, onClose, onSave }: Props) {
           </div>
         </div>
 
+        <div className="field">
+          <label>Appearance</label>
+          <div className="row" style={{ alignItems: "center" }}>
+            <label
+              style={{ textTransform: "none", letterSpacing: 0, margin: 0 }}
+            >
+              <input
+                type="checkbox"
+                checked={c.dark_mode}
+                onChange={(e) => set("dark_mode", e.target.checked)}
+              />{" "}
+              dark mode
+            </label>
+            <div style={{ flex: 1 }}>
+              <label>UI scale</label>
+              <input
+                type="number"
+                step="0.05"
+                min="0.75"
+                max="2"
+                value={c.ui_scale}
+                onChange={(e) => set("ui_scale", Number(e.target.value))}
+              />
+            </div>
+          </div>
+          <div className="row" style={{ marginTop: 10 }}>
+            <div style={{ flex: 1 }}>
+              <label>Font size</label>
+              <input
+                type="number"
+                value={c.font_size}
+                onChange={(e) => set("font_size", Number(e.target.value))}
+              />
+            </div>
+            <div style={{ flex: 1 }}>
+              <label>Mono size</label>
+              <input
+                type="number"
+                value={c.mono_font_size}
+                onChange={(e) => set("mono_font_size", Number(e.target.value))}
+              />
+            </div>
+          </div>
+          <div className="row" style={{ marginTop: 10 }}>
+            <div style={{ flex: 1 }}>
+              <label>Font family</label>
+              <input
+                placeholder="(default)"
+                value={c.font_family}
+                onChange={(e) => set("font_family", e.target.value)}
+              />
+            </div>
+            <div style={{ flex: 1 }}>
+              <label>Mono family</label>
+              <input
+                placeholder="(default)"
+                value={c.mono_font_family}
+                onChange={(e) => set("mono_font_family", e.target.value)}
+              />
+            </div>
+          </div>
+        </div>
+
         <div className="modal-actions">
           <button className="tbtn" onClick={onClose}>
             Cancel
