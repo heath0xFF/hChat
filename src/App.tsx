@@ -830,6 +830,13 @@ export function App() {
   hotkeyRef.current = (e: KeyboardEvent) => {
     if (!config) return;
     const hk = config.hotkeys;
+    // Esc closes the right dock (Status or Artifacts tab) when it's open.
+    // The settings modal and find bar handle their own Esc, so defer to them.
+    if (e.key === "Escape" && dockOpen && view === "chat" && !showSettings) {
+      e.preventDefault();
+      setDockOpen(false);
+      return;
+    }
     const fire = (combo: string, fn: () => void): boolean => {
       if (!matchCombo(e, combo)) return false;
       if (comboIsBare(combo) && isTypingTarget(e)) return false;
