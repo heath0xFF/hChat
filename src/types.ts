@@ -148,6 +148,23 @@ export interface MetricsSnapshot {
   server: ServerStats | null;
 }
 
+export interface AgentCommand {
+  name: string;
+  description: string;
+  body: string;
+}
+
+export interface Skill {
+  name: string;
+  description: string;
+  body: string;
+}
+
+export interface AgentsDto {
+  commands: AgentCommand[];
+  skills: Skill[];
+}
+
 export interface PresetDto {
   id: number;
   name: string;

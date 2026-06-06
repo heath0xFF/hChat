@@ -58,8 +58,9 @@ Tauri splits the app into a **Rust backend** (`src-tauri/`) and a **web frontend
   `message.rs` (`Message`/`Role`/`ContentPart`/`ToolCall`), `storage.rs` (SQLite
   via rusqlite — conversations, branching tree, presets), `config.rs` (TOML
   config + `Endpoint`), `tools.rs` (tool defs + builtins + shell handler),
-  `markdown.rs` (segmenting helpers), `slash.rs` (slash-command parser, not yet
-  wired into the new UI).
+  `agents.rs` (the `~/.agents` loader — commands/skills/tools, user +
+  project-local), `markdown.rs` (segmenting helpers), `slash.rs` (the original
+  slash parser; the live UI reimplements it in `lib/slash.ts`).
 
 ### Frontend — `src/` (React + TypeScript + Vite)
 

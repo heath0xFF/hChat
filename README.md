@@ -311,6 +311,54 @@ safety = "confirm"
 
 Restart to load new/edited tools.
 
+## Skills, commands & the `~/.agents` convention
+
+hChat also discovers portable [dot-agents](https://www.dot-agents.com/)-style
+resources, so commands, skills, and tools you've set up for other agents work
+here too. It scans, in increasing precedence:
+
+```text
+~/.agents/                    # user-level
+~/.agents/local/              # machine-specific overrides (gitignored)
+<conversation working_dir>/.agents/   # project-local, overrides the above
+```
+
+Each directory may contain:
+
+- **`commands/<name>.md`** → a `/name` slash command. The markdown body is a
+  prompt template; `$ARGUMENTS` (or `{{args}}`) is replaced with whatever you type
+  after the command, then sent as your message. Optional YAML frontmatter
+  (`description:`) shows up in `/help`.
+
+  ```markdown
+  ---
+  description: Summarize text crisply
+  ---
+  Summarize the following in 3 bullet points:
+
+  $ARGUMENTS
+  ```
+
+- **`skills/<name>/SKILL.md`** → a skill: YAML frontmatter (`name`,
+  `description`) plus instructions. Skills work **two ways** — the model sees the
+  available skills and can pull one in on demand (it calls a built-in `use_skill`
+  tool to load the full instructions), *and* you can inject one yourself by typing
+  `/name`.
+
+  ```markdown
+  ---
+  name: code-review
+  description: Review a diff for correctness and clarity
+  ---
+  When reviewing, check for: off-by-one errors, unhandled errors, …
+  ```
+
+- **`tools/<name>.toml`** → the same tool format as above, joined into the
+  model's tool set for that conversation.
+
+`/help` lists the commands and skills it found. Project-local entries (under the
+conversation's working directory) override your user-level ones by name.
+
 ## Keyboard & commands
 
 Shortcuts are rebindable in **Settings → Keyboard** (`mod` = Cmd on macOS /

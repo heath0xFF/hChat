@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api } from "./lib/tauri";
 import type {
+  AgentsDto,
   ChatEvent,
   Config,
   ConversationDto,
@@ -89,6 +90,15 @@ function applyAppearance(c: Config) {
   );
 }
 
+function expandCommand(body: string, args: string): string {
+  if (/\$ARGUMENTS|\{\{\s*args\s*\}\}/.test(body)) {
+    return body
+      .replace(/\$ARGUMENTS/g, args)
+      .replace(/\{\{\s*args\s*\}\}/g, args);
+  }
+  return args ? `${body}\n\n${args}` : body;
+}
+
 function toChatMessage(m: MessageDto): ChatMessage {
   return {
     id: m.id,
@@ -132,6 +142,7 @@ export function App() {
   const [tokenCount, setTokenCount] = useState(0);
   const [notice, setNotice] = useState<string | null>(null);
   const [focusSignal, setFocusSignal] = useState(0);
+  const [agents, setAgents] = useState<AgentsDto>({ commands: [], skills: [] });
 
   const reasoningBuf = useRef("");
   const contentBuf = useRef("");
@@ -199,6 +210,14 @@ export function App() {
     if (settings?.endpoint) void api.setMetricsTarget(settings.endpoint);
   }, [settings?.endpoint]);
 
+  // Load ~/.agents commands/skills (+ project .agents under the working dir).
+  useEffect(() => {
+    api
+      .listAgents(settings?.working_dir ?? null)
+      .then(setAgents)
+      .catch(() => setAgents({ commands: [], skills: [] }));
+  }, [settings?.working_dir]);
+
   // Apply theme / fonts / UI scale from config.
   useEffect(() => {
     if (config) applyAppearance(config);
@@ -236,6 +255,18 @@ export function App() {
     const r = parseSlash(raw);
     if (r.kind === "none") return false;
     if (r.kind === "unknown") {
+      // Fall through to ~/.agents commands + skills before declaring unknown.
+      const args = raw.trim().match(/^\/\S+\s*([\s\S]*)$/)?.[1] ?? "";
+      const cmd = agents.commands.find((c) => c.name.toLowerCase() === r.verb);
+      if (cmd) {
+        send(expandCommand(cmd.body, args));
+        return true;
+      }
+      const skill = agents.skills.find((s) => s.name.toLowerCase() === r.verb);
+      if (skill) {
+        send(args ? `${skill.body}\n\n${args}` : skill.body);
+        return true;
+      }
       setError(`Unknown command: /${r.verb} — try /help`);
       return true;
     }
@@ -272,9 +303,25 @@ export function App() {
         }
         break;
       }
-      case "help":
-        setNotice(SLASH_HELP);
+      case "help": {
+        let h = SLASH_HELP;
+        if (agents.commands.length) {
+          h +=
+            "\n\nCommands (~/.agents):\n" +
+            agents.commands
+              .map((cmd) => `/${cmd.name}${cmd.description ? "  — " + cmd.description : ""}`)
+              .join("\n");
+        }
+        if (agents.skills.length) {
+          h +=
+            "\n\nSkills (/name, or the model can use them):\n" +
+            agents.skills
+              .map((s) => `/${s.name}${s.description ? "  — " + s.description : ""}`)
+              .join("\n");
+        }
+        setNotice(h);
         break;
+      }
     }
     return true;
   };

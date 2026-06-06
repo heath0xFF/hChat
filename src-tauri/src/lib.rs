@@ -15,6 +15,8 @@ pub mod slash;
 pub mod markdown;
 #[path = "core/tools.rs"]
 pub mod tools;
+#[path = "core/agents.rs"]
+pub mod agents;
 
 mod commands;
 mod metrics;
@@ -47,6 +49,7 @@ pub fn run() {
             commands::export_conversation,
             commands::export_conversation_file,
             commands::save_draft,
+            commands::list_agents,
             commands::cancel_stream,
             commands::send_message,
             commands::regenerate,

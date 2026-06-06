@@ -304,6 +304,27 @@ pub fn save_draft(state: State<'_, AppState>, id: i64, text: String) {
     state.storage.lock().unwrap().save_draft(id, &text);
 }
 
+// ---------- ~/.agents (commands + skills) ----------
+
+#[derive(Serialize)]
+pub struct AgentsDto {
+    pub commands: Vec<crate::agents::AgentCommand>,
+    pub skills: Vec<crate::agents::Skill>,
+}
+
+/// List slash commands + skills discovered from `~/.agents` (and the project's
+/// `.agents/` under `working_dir`). Tools from the same dirs are loaded into the
+/// model's tool set during a turn, not surfaced here.
+#[tauri::command]
+pub fn list_agents(working_dir: Option<String>) -> AgentsDto {
+    let wd = working_dir.map(PathBuf::from);
+    let bundle = crate::agents::load(wd.as_deref());
+    AgentsDto {
+        commands: bundle.commands,
+        skills: bundle.skills,
+    }
+}
+
 #[tauri::command]
 pub fn delete_conversation(state: State<'_, AppState>, id: i64) {
     state.storage.lock().unwrap().delete_conversation(id);
@@ -533,6 +554,42 @@ fn resolve_wd(working_dir: Option<String>) -> PathBuf {
         .unwrap_or_else(|| dirs::home_dir().unwrap_or_else(|| PathBuf::from(".")))
 }
 
+/// Synthetic tool the model calls to pull a skill's full instructions on demand.
+fn use_skill_tool() -> ToolDef {
+    ToolDef {
+        name: "use_skill".to_string(),
+        description:
+            "Load the full instructions for one of the available skills by name, then follow them."
+                .to_string(),
+        parameters: serde_json::json!({
+            "type": "object",
+            "properties": {
+                "name": { "type": "string", "description": "The skill name to load." }
+            },
+            "required": ["name"]
+        }),
+        handler: Handler::Builtin(tools::BuiltinRef("use_skill".to_string())),
+        safety: Safety::Auto,
+    }
+}
+
+/// System message advertising the available skills to the model.
+fn skills_system_prompt(skills: &[crate::agents::Skill]) -> String {
+    let mut s = String::from(
+        "You have access to the following skills. When one is relevant to the user's \
+         request, call the `use_skill` tool with its name to load the full instructions, \
+         then follow them.\n\nAvailable skills:\n",
+    );
+    for sk in skills {
+        if sk.description.is_empty() {
+            s.push_str(&format!("- {}\n", sk.name));
+        } else {
+            s.push_str(&format!("- {}: {}\n", sk.name, sk.description));
+        }
+    }
+    s
+}
+
 #[tauri::command]
 pub async fn send_message(
     state: State<'_, AppState>,
@@ -707,7 +764,16 @@ async fn run_turn(
     first_assistant_branch_index: i64,
     on_event: &Channel<ChatEvent>,
 ) -> (Option<i64>, bool) {
-    let tool_defs: Vec<ToolDef> = state.tools.lock().unwrap().clone();
+    // User tools + tools/skills from the ~/.agents convention (user-level and
+    // project-local under the working dir).
+    let mut tool_defs: Vec<ToolDef> = state.tools.lock().unwrap().clone();
+    let bundle = crate::agents::load(Some(&working_dir));
+    tool_defs.extend(bundle.tools);
+    let skills = bundle.skills;
+    if !skills.is_empty() {
+        tool_defs.push(use_skill_tool());
+    }
+    let skills_prompt = (!skills.is_empty()).then(|| skills_system_prompt(&skills));
     let tools_api = if tool_defs.is_empty() {
         None
     } else {
@@ -726,9 +792,12 @@ async fn run_turn(
         }
         on_event.send(ChatEvent::TurnStart).ok();
 
-        let mut wire = Vec::with_capacity(messages.len() + 1);
+        let mut wire = Vec::with_capacity(messages.len() + 2);
         if !gp.system_prompt.trim().is_empty() {
             wire.push(Message::text(Role::System, gp.system_prompt.clone()));
+        }
+        if let Some(sp) = &skills_prompt {
+            wire.push(Message::text(Role::System, sp.clone()));
         }
         wire.extend(messages.iter().cloned());
 
@@ -771,6 +840,28 @@ async fn run_turn(
                     arguments: call.function.arguments.clone(),
                 })
                 .ok();
+
+            // `use_skill` is handled in-process: return the named skill's body.
+            if call.function.name == "use_skill" {
+                let name = serde_json::from_str::<serde_json::Value>(&call.function.arguments)
+                    .ok()
+                    .and_then(|v| v.get("name").and_then(|n| n.as_str()).map(String::from))
+                    .unwrap_or_default();
+                let (result, is_error) = match skills.iter().find(|s| s.name == name) {
+                    Some(s) => (s.body.clone(), false),
+                    None => (format!("unknown skill: {name}"), true),
+                };
+                on_event
+                    .send(ChatEvent::ToolResult {
+                        id: call.id.clone(),
+                        name: call.function.name.clone(),
+                        result: result.clone(),
+                        is_error,
+                    })
+                    .ok();
+                messages.push(Message::tool_result(call.id.clone(), result));
+                continue;
+            }
 
             let def = tool_defs.iter().find(|d| d.name == call.function.name).cloned();
             let (result, is_error) = match def {

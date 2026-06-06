@@ -3,6 +3,7 @@ import type {
   Config,
   ConversationData,
   ConversationDto,
+  AgentsDto,
   ChatEvent,
   GenParams,
   MessageDto,
@@ -81,4 +82,7 @@ export const api = {
 
   setMetricsTarget: (endpoint: string) =>
     invoke<void>("set_metrics_target", { endpoint }),
+
+  listAgents: (workingDir: string | null) =>
+    invoke<AgentsDto>("list_agents", { workingDir }),
 };
