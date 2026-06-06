@@ -1,8 +1,9 @@
 use crate::config::Config;
+use crate::mcp::McpManager;
 use crate::storage::Storage;
 use crate::tools;
 use std::collections::{HashMap, HashSet};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
@@ -33,6 +34,9 @@ pub struct AppState {
     /// `(conversation_id, tool_name)` pairs the user chose to auto-approve for
     /// the rest of the session via "approve all in this conversation".
     pub auto_approved: Mutex<HashSet<(i64, String)>>,
+    /// MCP client connections + discovered tools. Connected asynchronously after
+    /// startup (see `lib.rs` setup).
+    pub mcp: Arc<McpManager>,
 }
 
 impl AppState {
@@ -48,6 +52,7 @@ impl AppState {
             cancel: Mutex::new(None),
             pending_approvals: Mutex::new(HashMap::new()),
             auto_approved: Mutex::new(HashSet::new()),
+            mcp: McpManager::new(),
         }
     }
 

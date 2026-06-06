@@ -6,6 +6,7 @@ import type {
   AgentsDto,
   ChatEvent,
   GenParams,
+  McpStatus,
   MessageDto,
   PresetDto,
   ProjectDto,
@@ -96,4 +97,7 @@ export const api = {
 
   listAgents: (workingDir: string | null) =>
     invoke<AgentsDto>("list_agents", { workingDir }),
+
+  listMcpServers: () => invoke<McpStatus[]>("list_mcp_servers"),
+  reconnectMcp: () => invoke<void>("reconnect_mcp"),
 };

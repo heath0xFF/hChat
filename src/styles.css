@@ -1280,6 +1280,14 @@ select.model-select {
   color: var(--dim);
   margin-bottom: 10px;
 }
+.mcp-status {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--dim);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .hk-row {
   display: flex;
   align-items: center;

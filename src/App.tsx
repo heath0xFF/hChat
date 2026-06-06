@@ -724,6 +724,8 @@ export function App() {
     await api.saveConfig(next);
     setConfig(next);
     setShowSettings(false);
+    // Apply MCP server changes (connect/disconnect) without a restart.
+    void api.reconnectMcp().catch(() => {});
   };
 
   const applyPreset = async (p: PresetDto) => {

@@ -28,6 +28,9 @@ Electron app.
   commands, and write into a working directory. Five tools ship pre-configured;
   destructive ones prompt for approval (with "approve all in this conversation").
   Define your own as TOML in `~/.config/hchat/tools/`
+- **MCP** — connect to [Model Context Protocol](https://modelcontextprotocol.io)
+  servers (stdio or streamable HTTP); their tools join the model's tool set
+  automatically. Manage in Settings → MCP or `config.toml`
 - **Artifacts panel** — renders the HTML (live, sandboxed iframe), SVG, Markdown,
   Mermaid diagrams, and code your models produce, with a preview/source toggle
 - **Branching** — regenerate or edit any message to fork a sibling; navigate
@@ -360,6 +363,40 @@ Each directory may contain:
 
 `/help` lists the commands and skills it found. Project-local entries (under the
 conversation's working directory) override your user-level ones by name.
+
+## MCP servers
+
+hChat is an [MCP](https://modelcontextprotocol.io) client: connect to MCP servers
+and their tools join the model's tool set (namespaced `mcp_<server>_<tool>`),
+called and approved like any other tool. Configure in **Settings → MCP** (with
+live connection status + tool counts) or in `config.toml`:
+
+```toml
+[[mcp_servers]]
+name = "filesystem"
+transport = "stdio"           # "stdio" spawns the command below; "http" uses `url`
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem", "/Users/heath/code"]
+enabled = true
+auto_approve = false          # true = run this server's tools without prompting
+
+[[mcp_servers]]
+name = "github"
+transport = "stdio"
+command = "npx"
+args = ["-y", "@modelcontextprotocol/server-github"]
+env = { GITHUB_PERSONAL_ACCESS_TOKEN = "ghp_…" }
+
+# Remote streamable-HTTP server:
+[[mcp_servers]]
+name = "remote"
+transport = "http"
+url = "https://example.com/mcp"
+headers = { Authorization = "Bearer …" }
+```
+
+Editing servers in Settings reconnects them on save (no restart); there's also a
+**Reconnect all** button.
 
 ## Keyboard & commands
 

@@ -46,9 +46,13 @@ Tauri splits the app into a **Rust backend** (`src-tauri/`) and a **web frontend
   the core modules at the crate root via `#[path = "core/…"]` (so the ported
   code's `crate::message::…` references keep working) and registers every
   `#[tauri::command]` in `generate_handler!`.
-- **`state.rs`** — `AppState`: `Mutex<Storage>`, `Mutex<Config>`,
-  `Mutex<Vec<ToolDef>>`, the current stream's `CancellationToken`, and the
-  `pending_approvals` map (oneshots keyed by tool_call id). Managed by Tauri.
+- **`state.rs`** — `AppState`: `Mutex<Storage>`, `Mutex<Config>`, the current
+  stream's `CancellationToken`, the `pending_approvals` map (oneshots keyed by
+  tool_call id), the per-conversation `auto_approved` allowlist, and the
+  `Arc<McpManager>`. Managed by Tauri.
+- **`mcp/`** — MCP client manager (`rmcp` SDK): connects to configured servers
+  (stdio), discovers their tools, and routes `mcp_<server>_<tool>` calls. Merged
+  into the model's tool set in `run_turn`; connected in the `setup` hook.
 - **`commands.rs`** — the command layer that *replaces the old egui loop*. DTOs +
   commands for config, models, conversations, streaming chat, tools, branching,
   and presets. The chat orchestration lives in `run_turn` / `stream_once` (see
