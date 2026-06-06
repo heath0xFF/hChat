@@ -46,11 +46,20 @@ interface Props {
   onDeletePreset: (id: number) => void;
 }
 
-function runtimeBadge(endpoint: string): string {
+const RUNTIME_LABEL: Record<string, string> = {
+  vllm: "VLLM",
+  omlx: "OMLX",
+  llamacpp: "LLAMA.CPP",
+  llamaswap: "LLAMA-SWAP",
+  openai: "OPENAI",
+};
+
+function runtimeBadge(config: Config, endpoint: string): string {
+  // Prefer the configured runtime for this endpoint.
+  const ep = config.saved_endpoints.find((e) => e.url === endpoint);
+  if (ep?.runtime) return RUNTIME_LABEL[ep.runtime] ?? ep.runtime.toUpperCase();
+  // Fallback heuristics for ad-hoc endpoints not in the saved list.
   if (/openrouter\.ai/.test(endpoint)) return "OPENROUTER";
-  if (/:42069/.test(endpoint)) return "OMLX";
-  if (/:8000/.test(endpoint)) return "OMLX";
-  if (/:8080/.test(endpoint)) return "LLAMA.CPP";
   return "OPENAI";
 }
 
@@ -192,7 +201,9 @@ export function ChatView(props: Props) {
   return (
     <>
       <div className="topbar">
-        <span className="badge dot">{runtimeBadge(props.settings.endpoint)}</span>
+        <span className="badge dot">
+          {runtimeBadge(props.config, props.settings.endpoint)}
+        </span>
         <select
           className="model-select"
           value={props.settings.model ?? ""}

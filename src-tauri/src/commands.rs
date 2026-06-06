@@ -764,9 +764,9 @@ async fn run_turn(
     first_assistant_branch_index: i64,
     on_event: &Channel<ChatEvent>,
 ) -> (Option<i64>, bool) {
-    // User tools + tools/skills from the ~/.agents convention (user-level and
-    // project-local under the working dir).
-    let mut tool_defs: Vec<ToolDef> = state.tools.lock().unwrap().clone();
+    // User tools (loaded fresh each turn so edits hot-reload) + tools/skills
+    // from the ~/.agents convention (user-level and project-local).
+    let mut tool_defs: Vec<ToolDef> = tools::load_from_dir(&tools::user_tools_dir());
     let bundle = crate::agents::load(Some(&working_dir));
     tool_defs.extend(bundle.tools);
     let skills = bundle.skills;

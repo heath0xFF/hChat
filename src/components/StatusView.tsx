@@ -16,6 +16,8 @@ export interface LiveMetrics {
   activeRequests: number;
   throughputHistory: number[];
   ttftHistory: number[];
+  gpuUtilHistory: number[];
+  gpuPowerHistory: number[];
 }
 
 interface Props {
@@ -151,6 +153,24 @@ export function StatusView({ settings, model, streaming, metrics, snapshot }: Pr
           </div>
           <Chart data={m.ttftHistory} color="#e2a03f" />
         </div>
+        {(m.gpuUtilHistory.length > 1 || m.gpuPowerHistory.length > 1) && (
+          <>
+            <div className="chart-card">
+              <div className="chart-head">
+                <span>GPU util (%)</span>
+                <span>recent</span>
+              </div>
+              <Chart data={m.gpuUtilHistory} color="#6f9fff" />
+            </div>
+            <div className="chart-card">
+              <div className="chart-head">
+                <span>GPU power (W)</span>
+                <span>recent</span>
+              </div>
+              <Chart data={m.gpuPowerHistory} color="#e5484d" />
+            </div>
+          </>
+        )}
       </div>
 
       <div className="gpu-list">

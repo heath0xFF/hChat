@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::storage::Storage;
-use crate::tools::{self, ToolDef};
+use crate::tools;
 use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 use tokio::sync::oneshot;
@@ -23,7 +23,6 @@ pub struct PendingApproval {
 pub struct AppState {
     pub storage: Mutex<Storage>,
     pub config: Mutex<Config>,
-    pub tools: Mutex<Vec<ToolDef>>,
     /// Cancellation token for the in-flight chat stream, if any. Replaced on
     /// each `send_message`; `cancel_stream` fires it.
     pub cancel: Mutex<Option<CancellationToken>>,
@@ -40,13 +39,12 @@ impl AppState {
     pub fn new() -> Self {
         let config = Config::load();
         let storage = Storage::new();
-        let tools_dir = tools::user_tools_dir();
-        tools::seed_defaults_if_empty(&tools_dir);
-        let loaded = tools::load_from_dir(&tools_dir);
+        // Seed the default tools on first launch; tools are then (re)loaded from
+        // disk on every turn, so edits take effect without a restart.
+        tools::seed_defaults_if_empty(&tools::user_tools_dir());
         Self {
             storage: Mutex::new(storage),
             config: Mutex::new(config),
-            tools: Mutex::new(loaded),
             cancel: Mutex::new(None),
             pending_approvals: Mutex::new(HashMap::new()),
             auto_approved: Mutex::new(HashSet::new()),

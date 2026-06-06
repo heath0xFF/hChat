@@ -47,6 +47,8 @@ const EMPTY_METRICS: LiveMetrics = {
   activeRequests: 0,
   throughputHistory: [],
   ttftHistory: [],
+  gpuUtilHistory: [],
+  gpuPowerHistory: [],
 };
 
 function defaultSettings(config: Config): SettingsDto {
@@ -188,7 +190,9 @@ export function App() {
       setSnapshot(snap);
       const decode = snap.server?.decode_tok_s ?? null;
       const ttft = snap.server?.ttft_ms ?? null;
-      if (decode != null || ttft != null) {
+      const util = snap.gpu?.util_pct ?? null;
+      const power = snap.gpu?.power_w ?? null;
+      if (decode != null || ttft != null || util != null || power != null) {
         setMetrics((m) => ({
           ...m,
           throughputHistory:
@@ -197,6 +201,14 @@ export function App() {
               : m.throughputHistory,
           ttftHistory:
             ttft != null ? [...m.ttftHistory, ttft].slice(-120) : m.ttftHistory,
+          gpuUtilHistory:
+            util != null
+              ? [...m.gpuUtilHistory, util].slice(-120)
+              : m.gpuUtilHistory,
+          gpuPowerHistory:
+            power != null
+              ? [...m.gpuPowerHistory, power].slice(-120)
+              : m.gpuPowerHistory,
         }));
       }
     });
