@@ -1,0 +1,9 @@
+ah so i need to install prometheus on the DGX spark?
+
+---
+
+so what do i need fornax agent for?
+
+---
+
+ok that makes sense. let's clarify this in the readme
