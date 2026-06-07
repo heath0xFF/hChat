@@ -1683,3 +1683,57 @@ select.model-select {
 .icon-btn:hover {
   color: var(--text);
 }
+
+/* "Move to project" context menu (sidebar) */
+.ctx-menu {
+  position: fixed;
+  z-index: 60;
+  min-width: 168px;
+  max-width: 240px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 4px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.45);
+}
+.ctx-menu-label {
+  padding: 6px 10px 4px;
+  font-size: 10.5px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--dim);
+}
+.ctx-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 10px;
+  border-radius: 5px;
+  font-size: 13px;
+  color: var(--text);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ctx-menu-item:hover {
+  background: var(--panel-2);
+}
+.ctx-menu-item.disabled {
+  color: var(--dim);
+  cursor: default;
+}
+.ctx-menu-item.disabled:hover {
+  background: transparent;
+}
+.ctx-menu-dot {
+  display: inline-block;
+  width: 8px;
+  font-size: 9px;
+  color: var(--accent);
+}
+.ctx-menu-sep {
+  height: 1px;
+  background: var(--border-soft);
+  margin: 4px 2px;
+}

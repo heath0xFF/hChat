@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { ConversationDto, ProjectDto } from "../types";
 
 export type View = "status" | "usage" | "models" | "chat";
@@ -45,6 +45,35 @@ export function Sidebar(props: Props) {
   const [projBuf, setProjBuf] = useState("");
   const [collapsed, setCollapsed] = useState<Set<number>>(new Set());
   const [dropTarget, setDropTarget] = useState<number | "loose" | null>(null);
+  // "Move to project" context menu, opened by the inline ▤ button or right-click.
+  const [menu, setMenu] = useState<{
+    conv: ConversationDto;
+    x: number;
+    y: number;
+  } | null>(null);
+
+  const openMenu = (e: React.MouseEvent, c: ConversationDto) => {
+    e.preventDefault();
+    e.stopPropagation(); // don't let this click reach the close-on-outside handler
+    setMenu({ conv: c, x: e.clientX, y: e.clientY });
+  };
+
+  // Close the menu on any outside click or Esc.
+  useEffect(() => {
+    if (!menu) return;
+    const close = () => setMenu(null);
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setMenu(null);
+    };
+    window.addEventListener("click", close);
+    window.addEventListener("contextmenu", close);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("contextmenu", close);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [menu]);
 
   const commitRename = (id: number) => {
     if (renameBuf.trim()) props.onRename(id, renameBuf.trim());
@@ -81,6 +110,10 @@ export function Sidebar(props: Props) {
       draggable={renaming !== c.id}
       onDragStart={(e) => e.dataTransfer.setData("text/conv", String(c.id))}
       onClick={() => props.onSelectConv(c.id)}
+      onContextMenu={(e) => {
+        if (renaming === c.id) return; // keep the native menu while editing
+        openMenu(e, c);
+      }}
       onDoubleClick={() => {
         setRenaming(c.id);
         setRenameBuf(c.title);
@@ -107,6 +140,13 @@ export function Sidebar(props: Props) {
             </span>
           )}
           <span className="title">{c.title}</span>
+          <span
+            className="pin"
+            title="Move to project"
+            onClick={(e) => openMenu(e, c)}
+          >
+            ▤
+          </span>
           <span
             className={`pin ${c.pinned ? "on" : ""}`}
             title={c.pinned ? "Unpin" : "Pin"}
@@ -259,6 +299,60 @@ export function Sidebar(props: Props) {
           Settings
         </div>
       </div>
+
+      {menu &&
+        (() => {
+          // Clamp to the viewport so rows near the edges don't push it off-screen.
+          const rows =
+            props.projects.length +
+            (menu.conv.project_id != null ? 1 : 0) +
+            (props.projects.length === 0 ? 1 : 0);
+          const estH = 34 + rows * 30 + 8;
+          const left = Math.min(menu.x, window.innerWidth - 248);
+          const top = Math.min(menu.y, window.innerHeight - estH);
+          return (
+            <div
+              className="ctx-menu"
+              style={{ left: Math.max(8, left), top: Math.max(8, top) }}
+              onClick={(e) => e.stopPropagation()}
+            >
+          <div className="ctx-menu-label">Move to project</div>
+          {props.projects.length === 0 && (
+            <div className="ctx-menu-item disabled">No projects yet</div>
+          )}
+          {props.projects.map((p) => {
+            const here = (menu.conv.project_id ?? null) === p.id;
+            return (
+              <div
+                key={p.id}
+                className={`ctx-menu-item${here ? " disabled" : ""}`}
+                onClick={() => {
+                  if (!here) props.onMoveConv(menu.conv.id, p.id);
+                  setMenu(null);
+                }}
+              >
+                <span className="ctx-menu-dot">{here ? "●" : ""}</span>
+                {p.name}
+              </div>
+            );
+          })}
+          {menu.conv.project_id != null && (
+            <>
+              <div className="ctx-menu-sep" />
+              <div
+                className="ctx-menu-item"
+                onClick={() => {
+                  props.onMoveConv(menu.conv.id, null);
+                  setMenu(null);
+                }}
+              >
+                Remove from project
+              </div>
+            </>
+          )}
+            </div>
+          );
+        })()}
     </div>
   );
 }
