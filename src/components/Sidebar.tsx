@@ -122,7 +122,7 @@ export function Sidebar(props: Props) {
             title="Delete"
             onClick={(e) => {
               e.stopPropagation();
-              if (confirm(`Delete "${c.title}"?`)) props.onDelete(c.id);
+              props.onDelete(c.id);
             }}
           >
             ✕
@@ -215,8 +215,7 @@ export function Sidebar(props: Props) {
                       title="Delete project"
                       onClick={(e) => {
                         e.stopPropagation();
-                        if (confirm(`Delete project "${p.name}"? Its chats are kept.`))
-                          props.onDeleteProject(p.id);
+                        props.onDeleteProject(p.id);
                       }}
                     >
                       ✕

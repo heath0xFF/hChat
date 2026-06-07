@@ -578,6 +578,19 @@ impl Storage {
         }
     }
 
+    /// Delete every conversation and its messages. Projects are kept.
+    pub fn delete_all_conversations(&self) -> Result<(), String> {
+        let tx = self
+            .conn
+            .unchecked_transaction()
+            .map_err(|e| format!("Failed to start transaction: {e}"))?;
+        tx.execute("DELETE FROM messages", [])
+            .map_err(|e| format!("Failed to delete messages: {e}"))?;
+        tx.execute("DELETE FROM conversations", [])
+            .map_err(|e| format!("Failed to delete conversations: {e}"))?;
+        tx.commit().map_err(|e| format!("Failed to commit: {e}"))
+    }
+
     /// Incremental save: messages with `id = None` are INSERTed (and have
     /// their assigned rowid written back into the struct via the caller's
     /// `&mut`); messages with `id = Some` are UPDATEd in place. This

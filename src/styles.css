@@ -1492,6 +1492,31 @@ select.model-select {
   font-size: 16px;
 }
 
+/* compact confirm/prompt dialog (in-app replacement for window.confirm/prompt) */
+.dialog-modal {
+  width: 420px;
+}
+.dialog-modal .dialog-message {
+  margin: 0;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: var(--text);
+}
+.dialog-modal .dialog-input {
+  width: 100%;
+  margin-top: 14px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  color: var(--text);
+  padding: 8px 10px;
+  font-size: 13px;
+  outline: none;
+}
+.dialog-modal .dialog-input:focus {
+  border-color: var(--accent-dim);
+}
+
 /* sectioned settings — fixed size; content scrolls so switching sections
    doesn't resize the dialog. */
 .settings-modal {

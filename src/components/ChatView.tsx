@@ -10,6 +10,7 @@ import type { ChatMessage } from "./MessageItem";
 import { MessageItem } from "./MessageItem";
 import { ApprovalCard, type ApprovalDecision } from "./ApprovalCard";
 import { matchCombo } from "../lib/hotkeys";
+import { useDialog } from "./Dialog";
 
 interface Props {
   config: Config;
@@ -88,6 +89,7 @@ function readText(file: File): Promise<string> {
 
 export function ChatView(props: Props) {
   const { input, onInputChange } = props;
+  const dialog = useDialog();
   const [attachments, setAttachments] = useState<string[]>([]);
   const [selectedPreset, setSelectedPreset] = useState("");
   const [findOpen, setFindOpen] = useState(false);
@@ -242,12 +244,16 @@ export function ChatView(props: Props) {
           className="model-select"
           value={selectedPreset}
           title="Presets"
-          onChange={(e) => {
+          onChange={async (e) => {
             const val = e.target.value;
             if (val === "__save__") {
-              const name = window.prompt("Preset name");
-              if (name?.trim()) props.onSavePreset(name.trim());
               setSelectedPreset("");
+              const name = await dialog.prompt("Preset name", {
+                title: "Save preset",
+                placeholder: "Preset name",
+                confirmText: "Save",
+              });
+              if (name?.trim()) props.onSavePreset(name.trim());
             } else if (val) {
               const p = props.presets.find((x) => String(x.id) === val);
               if (p) props.onApplyPreset(p);

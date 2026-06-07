@@ -724,6 +724,11 @@ pub fn delete_conversation(state: State<'_, AppState>, id: i64) {
 }
 
 #[tauri::command]
+pub fn delete_all_conversations(state: State<'_, AppState>) -> Result<(), String> {
+    state.storage.lock().unwrap().delete_all_conversations()
+}
+
+#[tauri::command]
 pub fn rename_conversation(state: State<'_, AppState>, id: i64, title: String) {
     state
         .storage

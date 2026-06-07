@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "../lib/tauri";
 import type { UsageStats } from "../types";
 import { Chart } from "./Chart";
+import { useDialog } from "./Dialog";
 
 function fmtInt(n: number): string {
   return n.toLocaleString();
@@ -22,6 +23,7 @@ function hostOf(url: string): string {
 }
 
 export function UsageView() {
+  const dialog = useDialog();
   const [stats, setStats] = useState<UsageStats | null>(null);
 
   const refresh = useCallback(async () => {
@@ -33,10 +35,15 @@ export function UsageView() {
   }, [refresh]);
 
   const clear = useCallback(async () => {
-    if (!window.confirm("Clear all recorded usage history?")) return;
+    const ok = await dialog.confirm("Clear all recorded usage history?", {
+      title: "Clear usage",
+      confirmText: "Clear",
+      danger: true,
+    });
+    if (!ok) return;
     await api.clearUsage();
     await refresh();
-  }, [refresh]);
+  }, [refresh, dialog]);
 
   const successRate =
     stats && stats.total_requests > 0

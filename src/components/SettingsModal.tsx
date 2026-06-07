@@ -7,6 +7,7 @@ interface Props {
   config: Config;
   onClose: () => void;
   onSave: (config: Config) => void;
+  onClearHistory: () => void;
 }
 
 type Section =
@@ -62,7 +63,7 @@ function HotkeyInput({
   );
 }
 
-export function SettingsModal({ config, onClose, onSave }: Props) {
+export function SettingsModal({ config, onClose, onSave, onClearHistory }: Props) {
   const [c, setC] = useState<Config>(structuredClone(config));
   const [section, setSection] = useState<Section>("general");
   const [mcpStatus, setMcpStatus] = useState<McpStatus[]>([]);
@@ -167,6 +168,16 @@ export function SettingsModal({ config, onClose, onSave }: Props) {
                 <div className="field-hint">
                   Prune recorded usage older than this. 0 keeps everything
                   forever.
+                </div>
+              </div>
+              <div className="field">
+                <label>Danger zone</label>
+                <button className="tbtn danger" onClick={onClearHistory}>
+                  Delete all chat history
+                </button>
+                <div className="field-hint">
+                  Permanently deletes every conversation and its messages.
+                  Projects are kept. This cannot be undone.
                 </div>
               </div>
             </>

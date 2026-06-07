@@ -21,6 +21,7 @@ import { StatusView, type LiveMetrics } from "./components/StatusView";
 import { UsageView } from "./components/UsageView";
 import { ModelsView } from "./components/ModelsView";
 import { SettingsModal } from "./components/SettingsModal";
+import { useDialog } from "./components/Dialog";
 import { ArtifactPanel } from "./components/ArtifactPanel";
 import { RightDock, type DockTab } from "./components/RightDock";
 import type { ApprovalDecision } from "./components/ApprovalCard";
@@ -123,6 +124,7 @@ function toChatMessage(m: MessageDto): ChatMessage {
 }
 
 export function App() {
+  const dialog = useDialog();
   const [config, setConfig] = useState<Config | null>(null);
   const [conversations, setConversations] = useState<ConversationDto[]>([]);
   const [projects, setProjects] = useState<ProjectDto[]>([]);
@@ -916,12 +918,23 @@ export function App() {
           refreshConversations();
         }}
         onDelete={async (id) => {
+          const title = conversations.find((c) => c.id === id)?.title ?? "chat";
+          const ok = await dialog.confirm(`Delete "${title}"?`, {
+            title: "Delete chat",
+            confirmText: "Delete",
+            danger: true,
+          });
+          if (!ok) return;
           await api.deleteConversation(id);
           if (activeConvId === id) newChat();
           refreshConversations();
         }}
         onCreateProject={async () => {
-          const name = window.prompt("Project name");
+          const name = await dialog.prompt("Project name", {
+            title: "New project",
+            placeholder: "Project name",
+            confirmText: "Create",
+          });
           if (name?.trim()) {
             await api.createProject(name.trim());
             refreshProjects();
@@ -932,6 +945,12 @@ export function App() {
           refreshProjects();
         }}
         onDeleteProject={async (id) => {
+          const name = projects.find((p) => p.id === id)?.name ?? "project";
+          const ok = await dialog.confirm(
+            `Delete project "${name}"? Its chats are kept.`,
+            { title: "Delete project", confirmText: "Delete", danger: true },
+          );
+          if (!ok) return;
           await api.deleteProject(id);
           await refreshProjects();
           refreshConversations();
@@ -1050,6 +1069,20 @@ export function App() {
           config={config}
           onClose={() => setShowSettings(false)}
           onSave={saveConfig}
+          onClearHistory={async () => {
+            const ok = await dialog.confirm(
+              "Delete ALL chat history? Every conversation and its messages will be permanently removed. Projects are kept.",
+              {
+                title: "Delete all chat history",
+                confirmText: "Delete everything",
+                danger: true,
+              },
+            );
+            if (!ok) return;
+            await api.deleteAllConversations();
+            newChat();
+            refreshConversations();
+          }}
         />
       )}
 
