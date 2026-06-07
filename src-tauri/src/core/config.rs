@@ -191,7 +191,13 @@ pub struct Config {
     pub font_size: f32,
     pub mono_font_size: f32,
     pub ui_scale: f32,
+    /// Legacy light/dark toggle. Kept in sync with `theme` for back-compat;
+    /// `theme` is the source of truth.
     pub dark_mode: bool,
+    /// Color theme: `dark`, `light`, or `catppuccin-{latte,frappe,macchiato,mocha}`.
+    /// Empty in an older config triggers migration from `dark_mode` in sanitize.
+    #[serde(default)]
+    pub theme: String,
     pub default_endpoint: String,
     pub system_prompt: String,
     pub temperature: f32,
@@ -226,6 +232,7 @@ impl Default for Config {
             mono_font_size: 13.0,
             ui_scale: 1.0,
             dark_mode: true,
+            theme: "dark".to_string(),
             default_endpoint: "http://localhost:1234/v1".to_string(),
             system_prompt: String::new(),
             temperature: 0.7,
@@ -386,6 +393,25 @@ impl Config {
             ep.url = ep.url.trim().to_string();
         }
         self.saved_endpoints.retain(|ep| !ep.url.is_empty());
+
+        // Theme: migrate from the legacy dark_mode flag when unset, validate
+        // against the known set, then keep dark_mode in sync for any legacy
+        // reader.
+        const THEMES: &[&str] = &[
+            "dark",
+            "light",
+            "catppuccin-latte",
+            "catppuccin-frappe",
+            "catppuccin-macchiato",
+            "catppuccin-mocha",
+        ];
+        if self.theme.is_empty() {
+            self.theme = if self.dark_mode { "dark" } else { "light" }.to_string();
+        }
+        if !THEMES.contains(&self.theme.as_str()) {
+            self.theme = "dark".to_string();
+        }
+        self.dark_mode = !matches!(self.theme.as_str(), "light" | "catppuccin-latte");
     }
 }
 
@@ -402,5 +428,28 @@ mod tests {
         assert_eq!(cfg.hotkeys.settings, "mod+,");
         assert_eq!(cfg.hotkeys.new_chat, "mod+n");
         assert!(!cfg.saved_endpoints.is_empty());
+    }
+
+    #[test]
+    fn theme_migrates_and_validates() {
+        // Old config with no `theme`: migrate from dark_mode.
+        let mut dark = Config { theme: String::new(), dark_mode: true, ..Default::default() };
+        dark.sanitize();
+        assert_eq!(dark.theme, "dark");
+
+        let mut light = Config { theme: String::new(), dark_mode: false, ..Default::default() };
+        light.sanitize();
+        assert_eq!(light.theme, "light");
+
+        // Unknown theme falls back to dark.
+        let mut bogus = Config { theme: "neon".into(), ..Default::default() };
+        bogus.sanitize();
+        assert_eq!(bogus.theme, "dark");
+
+        // A light flavor keeps the legacy dark_mode flag consistent.
+        let mut latte = Config { theme: "catppuccin-latte".into(), dark_mode: true, ..Default::default() };
+        latte.sanitize();
+        assert_eq!(latte.theme, "catppuccin-latte");
+        assert!(!latte.dark_mode);
     }
 }

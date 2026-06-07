@@ -6,7 +6,13 @@
 
 # --- Appearance & UI ---
 
-# dark_mode: Enable dark mode (true) or light mode (false).
+# theme: Color theme. One of:
+#   dark, light,
+#   catppuccin-mocha, catppuccin-macchiato, catppuccin-frappe, catppuccin-latte
+# Default: dark. (When omitted, falls back to dark_mode below.)
+theme = "dark"
+
+# dark_mode: Legacy light/dark toggle, kept in sync with `theme`. `theme` wins.
 # Default: true
 dark_mode = true
 

@@ -27,6 +27,15 @@ const SECTIONS: { key: Section; label: string }[] = [
   { key: "mcp", label: "MCP" },
 ];
 
+const THEMES: { key: string; label: string }[] = [
+  { key: "dark", label: "Dark (default)" },
+  { key: "light", label: "Light" },
+  { key: "catppuccin-mocha", label: "Catppuccin Mocha" },
+  { key: "catppuccin-macchiato", label: "Catppuccin Macchiato" },
+  { key: "catppuccin-frappe", label: "Catppuccin Frappé" },
+  { key: "catppuccin-latte", label: "Catppuccin Latte" },
+];
+
 const RUNTIMES: RuntimeKind[] = ["openai", "vllm", "omlx", "llamacpp", "llamaswap"];
 const GPUS: GpuKind[] = ["none", "macmon", "agent"];
 
@@ -405,17 +414,20 @@ export function SettingsModal({ config, onClose, onSave, onClearHistory }: Props
           {section === "appearance" && (
             <>
               <div className="field">
-                <div className="row" style={{ alignItems: "center" }}>
-                  <label
-                    style={{ textTransform: "none", letterSpacing: 0, margin: 0 }}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={c.dark_mode}
-                      onChange={(e) => set("dark_mode", e.target.checked)}
-                    />{" "}
-                    dark mode
-                  </label>
+                <div className="row">
+                  <div style={{ flex: 1 }}>
+                    <label>Theme</label>
+                    <select
+                      value={c.theme || (c.dark_mode ? "dark" : "light")}
+                      onChange={(e) => set("theme", e.target.value)}
+                    >
+                      {THEMES.map((t) => (
+                        <option key={t.key} value={t.key}>
+                          {t.label}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
                   <div style={{ flex: 1 }}>
                     <label>UI scale</label>
                     <input
