@@ -216,6 +216,24 @@ agent_url = "http://spark:9099"
   Local endpoints on macOS default to `macmon` automatically, so VRAM/power/temp
   show up with no config
 
+**The two sources are independent.** `prometheus_url` feeds the *inference-server*
+metrics — the decode / prefill / TTFT tiles and the **Throughput** and **TTFT**
+charts — while `gpu` / `agent_url` feeds the *hardware* metrics: the VRAM tile and
+the **GPU util** / **GPU power** charts. Configure either, both, or neither:
+
+| You set… | You get | You don't get |
+|---|---|---|
+| `gpu = "agent"` only | VRAM, GPU util/power, temp, device rows | Throughput / TTFT / requests |
+| `prometheus_url` only | Throughput, TTFT, prefill, requests, KV cache | GPU util/power, VRAM |
+| both | everything | — |
+
+So if the GPU charts move but **Throughput/TTFT stay flat, you're missing
+`prometheus_url`** (not the agent) — point it at your server's `/metrics`
+(`http://host:8080/metrics` for llama-swap, `:8000` for vLLM) and set the matching
+`runtime`. Caveat: **llama-swap exposes no TTFT metric**, so its live TTFT chart
+only ever shows one point per request even when wired up; decode/prefill stream
+live.
+
 ### The metrics agent (`fornax-agent`)
 
 `nvidia-smi` can't report VRAM on a GB10 / DGX Spark — CPU and GPU share unified
