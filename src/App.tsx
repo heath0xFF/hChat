@@ -422,6 +422,8 @@ export function App() {
       setDockOpen(false);
       return;
     }
+    // Default the Status view to the endpoint this chat is talking to.
+    if (settings?.endpoint) setStatusEndpoint(settings.endpoint);
     setDockTab("status");
     setDockOpen(true);
   };
