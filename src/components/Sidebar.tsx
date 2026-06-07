@@ -9,6 +9,8 @@ interface Props {
   conversations: ConversationDto[];
   projects: ProjectDto[];
   activeConvId: number | null;
+  // Conversation ids with a stream in flight — shows a live indicator.
+  streamingIds: number[];
   onSelectConv: (id: number) => void;
   onNewChat: () => void;
   onSearch: (q: string) => void;
@@ -134,10 +136,14 @@ export function Sidebar(props: Props) {
         />
       ) : (
         <>
-          {c.runtime && (
-            <span className={`conv-rt rt-${c.runtime}`} title={c.runtime}>
-              {RT_BADGE[c.runtime] ?? "··"}
-            </span>
+          {props.streamingIds.includes(c.id) ? (
+            <span className="conv-streaming" title="Generating…" />
+          ) : (
+            c.runtime && (
+              <span className={`conv-rt rt-${c.runtime}`} title={c.runtime}>
+                {RT_BADGE[c.runtime] ?? "··"}
+              </span>
+            )
           )}
           <span className="title">{c.title}</span>
           <span

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { api } from "./lib/tauri";
 import type {
@@ -123,6 +123,27 @@ function toChatMessage(m: MessageDto): ChatMessage {
   };
 }
 
+// Per-conversation streaming runtime. Each chat owns its own message list and
+// streaming flag so multiple chats can stream concurrently — switching chats
+// just changes which entry is on screen; background streams keep updating their
+// own entry. Brand-new chats live under a negative temp id until the backend
+// assigns a real conversation_id (see the `started` event in `handleEvent`).
+interface ConvRuntime {
+  messages: ChatMessage[];
+  streaming: boolean;
+}
+
+const EMPTY_CONV: ConvRuntime = { messages: [], streaming: false };
+
+// One in-flight stream's mutable context. `convId` starts as the temp id of an
+// unsaved chat and is rewritten to the real conversation_id on `started`, so
+// later events from the same stream route to the right conversation.
+interface StreamSession {
+  convId: number;
+  reasoning: string;
+  content: string;
+}
+
 export function App() {
   const dialog = useDialog();
   const [config, setConfig] = useState<Config | null>(null);
@@ -130,17 +151,19 @@ export function App() {
   const [projects, setProjects] = useState<ProjectDto[]>([]);
   const [view, setView] = useState<View>("chat");
   const [activeConvId, setActiveConvId] = useState<number | null>(null);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  // All chats' runtimes keyed by conversation_id (negative = unsaved new chat).
+  const [convStore, setConvStore] = useState<Record<number, ConvRuntime>>({});
   const [settings, setSettings] = useState<SettingsDto | null>(null);
   const [models, setModels] = useState<string[]>([]);
-  const [streaming, setStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
   const [metrics, setMetrics] = useState<LiveMetrics>(EMPTY_METRICS);
   const [searchQuery, setSearchQuery] = useState("");
-  const [pendingApproval, setPendingApproval] = useState<PendingApproval | null>(
-    null,
-  );
+  // Parked tool approvals keyed by conversation_id — a background chat can be
+  // waiting on approval while you read another; resolving shows per active chat.
+  const [pendingByConv, setPendingByConv] = useState<
+    Record<number, PendingApproval>
+  >({});
   const [siblingMap, setSiblingMap] = useState<Record<number, SiblingInfo>>({});
   const [presets, setPresets] = useState<PresetDto[]>([]);
   const [snapshot, setSnapshot] = useState<MetricsSnapshot | null>(null);
@@ -160,9 +183,13 @@ export function App() {
   const [focusSignal, setFocusSignal] = useState(0);
   const [agents, setAgents] = useState<AgentsDto>({ commands: [], skills: [] });
 
-  const reasoningBuf = useRef("");
-  const contentBuf = useRef("");
-  const convIdRef = useRef<number | null>(null);
+  // Monotonically-decreasing temp ids for unsaved new chats (before the backend
+  // assigns a real conversation_id).
+  const nextTempId = useRef(-1);
+  // Latest active conversation, readable from stream callbacks that closed over
+  // a stale value (e.g. the post-turn artifact auto-open in `runStream`).
+  const activeConvIdRef = useRef<number | null>(null);
+  activeConvIdRef.current = activeConvId;
   const configRef = useRef<Config | null>(null);
   const hotkeyRef = useRef<(e: KeyboardEvent) => void>(() => {});
   const viewRef = useRef(view);
@@ -174,6 +201,56 @@ export function App() {
   const metricsVisible = view === "status" || (dockOpen && dockTab === "status");
   const metricsVisibleRef = useRef(metricsVisible);
   metricsVisibleRef.current = metricsVisible;
+
+  // ----- derived view of the active conversation -----
+  const messages = useMemo<ChatMessage[]>(
+    () => (activeConvId != null ? convStore[activeConvId]?.messages ?? [] : []),
+    [convStore, activeConvId],
+  );
+  const streaming =
+    activeConvId != null ? convStore[activeConvId]?.streaming ?? false : false;
+  const pendingApproval =
+    activeConvId != null ? pendingByConv[activeConvId] ?? null : null;
+  // Conversation ids with a stream in flight (drives the sidebar indicator).
+  const streamingIds = useMemo(
+    () =>
+      Object.entries(convStore)
+        .filter(([, v]) => v.streaming)
+        .map(([k]) => Number(k)),
+    [convStore],
+  );
+
+  // ----- per-conversation store mutators -----
+  const patchConvMessages = useCallback(
+    (id: number, fn: (msgs: ChatMessage[]) => ChatMessage[]) =>
+      setConvStore((s) => {
+        const cur = s[id] ?? EMPTY_CONV;
+        return { ...s, [id]: { ...cur, messages: fn(cur.messages) } };
+      }),
+    [],
+  );
+  const setConvMessages = useCallback(
+    (id: number, msgs: ChatMessage[]) => patchConvMessages(id, () => msgs),
+    [patchConvMessages],
+  );
+  const setConvStreaming = useCallback(
+    (id: number, on: boolean) =>
+      setConvStore((s) => ({
+        ...s,
+        [id]: { ...(s[id] ?? EMPTY_CONV), streaming: on },
+      })),
+    [],
+  );
+  const clearPending = useCallback(
+    (id: number) =>
+      setPendingByConv((p) => {
+        if (!(id in p)) return p;
+        const n = { ...p };
+        delete n[id];
+        return n;
+      }),
+    [],
+  );
 
   const refreshConversations = useCallback(async () => {
     setConversations(await api.listConversations());
@@ -323,9 +400,9 @@ export function App() {
     return () => clearTimeout(t);
   }, [composerInput]);
 
-  // Debounced per-conversation draft persistence.
+  // Debounced per-conversation draft persistence (saved chats only).
   useEffect(() => {
-    if (activeConvId == null) return;
+    if (activeConvId == null || activeConvId < 0) return;
     const id = activeConvId;
     const t = setTimeout(() => void api.saveDraft(id, composerInput), 500);
     return () => clearTimeout(t);
@@ -447,9 +524,9 @@ export function App() {
 
   const newChat = () => {
     if (!config) return;
+    // Empty new chat stays unkeyed (activeConvId null) until the first send,
+    // which assigns a temp id. Background streams in other chats keep running.
     setActiveConvId(null);
-    convIdRef.current = null;
-    setMessages([]);
     setComposerInput("");
     setView("chat");
     const s = defaultSettings(config);
@@ -460,8 +537,12 @@ export function App() {
   const selectConv = async (id: number) => {
     const data = await api.loadConversation(id);
     setActiveConvId(id);
-    convIdRef.current = id;
-    setMessages(data.messages.map(toChatMessage));
+    // Don't clobber a chat that's mid-stream with the (stale) DB snapshot —
+    // its live messages are authoritative until the turn finishes and reloads.
+    // The sibling map reflects committed branch structure, so rebuild it either
+    // way (in-progress messages have null ids and don't appear in it).
+    const live = convStore[id]?.streaming ?? false;
+    if (!live) setConvMessages(id, data.messages.map(toChatMessage));
     void buildSiblingMap(data.messages);
     setSettings(data.settings);
     setComposerInput(data.draft ?? "");
@@ -489,9 +570,13 @@ export function App() {
     setView("chat");
   };
 
-  // Mutate the most recent assistant message (the one currently streaming).
-  const patchLastAssistant = (fn: (m: ChatMessage) => ChatMessage) => {
-    setMessages((prev) => {
+  // Mutate the most recent assistant message of a given conversation (the one
+  // currently streaming there).
+  const patchLastAssistant = (
+    id: number,
+    fn: (m: ChatMessage) => ChatMessage,
+  ) =>
+    patchConvMessages(id, (prev) => {
       const next = prev.slice();
       for (let i = next.length - 1; i >= 0; i--) {
         if (next[i].role === "assistant") {
@@ -501,12 +586,6 @@ export function App() {
       }
       return next;
     });
-  };
-
-  const updateLastAssistant = () => {
-    const text = combine(reasoningBuf.current, contentBuf.current);
-    patchLastAssistant((m) => ({ ...m, text }));
-  };
 
   const genParamsFrom = (s: SettingsDto): GenParams => ({
     endpoint: s.endpoint,
@@ -521,25 +600,45 @@ export function App() {
     stop_sequences: s.stop_sequences,
   });
 
-  // Shared streaming event handler used by send / regenerate / edit.
-  const handleEvent = (ev: ChatEvent) => {
+  // Shared streaming event handler used by send / regenerate / edit. Bound to a
+  // `session` so every mutation targets that stream's conversation, regardless
+  // of which chat is currently on screen.
+  const handleEvent = (ev: ChatEvent, session: StreamSession) => {
         switch (ev.type) {
-          case "started":
-            convIdRef.current = ev.conversation_id;
-            if (activeConvId === null) {
-              // First message in a new chat: the backend just created the
-              // conversation row, so surface it in the sidebar immediately
-              // (titled "untitled chat" until auto-titling runs post-response).
-              setActiveConvId(ev.conversation_id);
+          case "started": {
+            const realId = ev.conversation_id;
+            const tempId = session.convId;
+            if (tempId !== realId) {
+              // The backend just created the conversation row. Migrate the
+              // optimistic temp-id entry onto the real id and surface it in the
+              // sidebar (titled "untitled chat" until auto-titling runs).
+              setConvStore((s) => {
+                const entry = s[tempId] ?? EMPTY_CONV;
+                const n = { ...s };
+                delete n[tempId];
+                n[realId] = entry;
+                return n;
+              });
+              setPendingByConv((p) => {
+                if (!(tempId in p)) return p;
+                const n = { ...p };
+                n[realId] = n[tempId];
+                delete n[tempId];
+                return n;
+              });
+              // Follow the migration on screen only if still viewing this chat.
+              setActiveConvId((cur) => (cur === tempId ? realId : cur));
+              session.convId = realId;
               refreshConversations();
             }
             break;
+          }
           case "turn_start":
             // Close out the previous assistant turn, reset buffers, and open a
             // fresh streaming placeholder for this turn.
-            reasoningBuf.current = "";
-            contentBuf.current = "";
-            setMessages((prev) => {
+            session.reasoning = "";
+            session.content = "";
+            patchConvMessages(session.convId, (prev) => {
               const next = prev.map((m) =>
                 m.role === "assistant" && m.streaming
                   ? { ...m, streaming: false }
@@ -552,15 +651,21 @@ export function App() {
             });
             break;
           case "token":
-            contentBuf.current += ev.text;
-            updateLastAssistant();
+            session.content += ev.text;
+            patchLastAssistant(session.convId, (m) => ({
+              ...m,
+              text: combine(session.reasoning, session.content),
+            }));
             break;
           case "reasoning":
-            reasoningBuf.current += ev.text;
-            updateLastAssistant();
+            session.reasoning += ev.text;
+            patchLastAssistant(session.convId, (m) => ({
+              ...m,
+              text: combine(session.reasoning, session.content),
+            }));
             break;
           case "tool_call":
-            patchLastAssistant((m) => ({
+            patchLastAssistant(session.convId, (m) => ({
               ...m,
               toolCalls: [
                 ...(m.toolCalls ?? []),
@@ -569,15 +674,18 @@ export function App() {
             }));
             break;
           case "tool_approval":
-            setPendingApproval({
-              id: ev.id,
-              name: ev.name,
-              arguments: ev.arguments,
-            });
+            setPendingByConv((p) => ({
+              ...p,
+              [session.convId]: {
+                id: ev.id,
+                name: ev.name,
+                arguments: ev.arguments,
+              },
+            }));
             break;
           case "tool_result":
-            setPendingApproval(null);
-            setMessages((prev) => [
+            clearPending(session.convId);
+            patchConvMessages(session.convId, (prev) => [
               ...prev,
               {
                 id: null,
@@ -619,7 +727,7 @@ export function App() {
             setError(ev.message);
             break;
           case "done":
-            setMessages((prev) => {
+            patchConvMessages(session.convId, (prev) => {
               const next = prev.slice();
               for (let i = next.length - 1; i >= 0; i--) {
                 if (next[i].role === "assistant") {
@@ -648,58 +756,78 @@ export function App() {
     setSiblingMap(map);
   };
 
-  // After a turn, reload the canonical active path from the DB so message ids
-  // and branch structure are correct for subsequent edit/regenerate/navigate.
-  const reloadAndIndex = async (id: number): Promise<ChatMessage[]> => {
+  // After a turn, reload the canonical path for that conversation from the DB so
+  // message ids and branch structure are correct for subsequent edit/
+  // regenerate/navigate. The sibling map is only relevant for the chat on
+  // screen, so rebuild it only when this conversation is the active one.
+  const reloadConv = async (id: number): Promise<ChatMessage[]> => {
     const data = await api.loadConversation(id);
     const msgs = data.messages.map(toChatMessage);
-    setMessages(msgs);
-    await buildSiblingMap(data.messages);
+    setConvMessages(id, msgs);
+    if (id === activeConvIdRef.current) await buildSiblingMap(data.messages);
     return msgs;
   };
 
   const runStream = async (
+    startId: number,
     starter: (h: (ev: ChatEvent) => void) => Promise<number>,
   ) => {
-    // Snapshot artifacts present before this turn so we only auto-open the dock
-    // for a genuinely new one — not re-open it after every reply in a chat that
+    // Snapshot artifacts already in this chat so we only auto-open the dock for
+    // a genuinely new one — not re-open after every reply in a chat that
     // already has artifacts.
-    const priorArtifactCodes = new Set(artifacts.map((a) => a.code));
+    const priorArtifactCodes = new Set(
+      collectArtifacts(convStore[startId]?.messages ?? []).map((a) => a.code),
+    );
+    const session: StreamSession = {
+      convId: startId,
+      reasoning: "",
+      content: "",
+    };
     setError(null);
-    setPendingApproval(null);
-    reasoningBuf.current = "";
-    contentBuf.current = "";
-    setStreaming(true);
+    clearPending(startId);
+    setConvStreaming(startId, true);
     setMetrics((m) => ({
       ...m,
-      activeRequests: 1,
+      activeRequests: m.activeRequests + 1,
       decode: null,
       ttft: null,
       prefill: null,
     }));
-    let id: number | null = convIdRef.current;
     try {
-      id = await starter(handleEvent);
+      await starter((ev) => handleEvent(ev, session));
     } catch (e) {
       setError(String(e));
     } finally {
-      setStreaming(false);
-      setPendingApproval(null);
-      setMessages((prev) =>
+      // session.convId is the real id after `started` migrated any temp id.
+      const fid = session.convId;
+      setConvStreaming(fid, false);
+      patchConvMessages(fid, (prev) =>
         prev.map((m) => (m.streaming ? { ...m, streaming: false } : m)),
       );
-      setMetrics((m) => ({ ...m, activeRequests: 0 }));
-      if (id != null) {
-        const msgs = await reloadAndIndex(id);
-        // Auto-open only a freshly generated previewable artifact (HTML/SVG/MD),
-        // Claude-Desktop style — one whose code wasn't already in the chat.
-        const preview = [...collectArtifacts(msgs)]
-          .reverse()
-          .find((a) => isPreviewable(a) && !priorArtifactCodes.has(a.code));
-        if (preview) {
-          setCurrentArtifact(preview);
-          setDockTab("artifacts");
-          setDockOpen(true);
+      clearPending(fid);
+      setMetrics((m) => ({
+        ...m,
+        activeRequests: Math.max(0, m.activeRequests - 1),
+      }));
+      // A still-negative id means the request failed before `started` ever
+      // arrived (e.g. a DB error creating the conversation), so there's nothing
+      // in the DB to reload — keep the optimistic messages so the user sees
+      // what they typed alongside the error toast, and skip the reload that
+      // would otherwise wipe them.
+      if (fid > 0) {
+        const msgs = await reloadConv(fid);
+        // Auto-open a freshly generated previewable artifact (HTML/SVG/MD),
+        // Claude-Desktop style — but only when this chat is the one on screen,
+        // so a background stream doesn't yank the dock open under you.
+        if (fid === activeConvIdRef.current) {
+          const preview = [...collectArtifacts(msgs)]
+            .reverse()
+            .find((a) => isPreviewable(a) && !priorArtifactCodes.has(a.code));
+          if (preview) {
+            setCurrentArtifact(preview);
+            setDockTab("artifacts");
+            setDockOpen(true);
+          }
         }
       }
       refreshConversations();
@@ -708,15 +836,19 @@ export function App() {
 
   const send = (text: string, images: string[] = []) => {
     if (!settings || !settings.model) return;
-    setMessages((prev) => [
+    // New chat: allocate a temp id and surface it on screen; existing chat:
+    // append to its own store. The temp id becomes real on the `started` event.
+    const startId = activeConvId ?? nextTempId.current--;
+    if (activeConvId == null) setActiveConvId(startId);
+    patchConvMessages(startId, (prev) => [
       ...prev,
       { id: null, role: "user", text, images },
     ]);
-    runStream((h) =>
+    runStream(startId, (h) =>
       api.sendMessage(
         {
           ...genParamsFrom(settings),
-          conversation_id: activeConvId,
+          conversation_id: startId > 0 ? startId : null,
           user_text: text,
           images,
         },
@@ -727,8 +859,9 @@ export function App() {
 
   const regenerate = () => {
     if (!settings || !settings.model || activeConvId == null) return;
+    const id = activeConvId;
     // Drop the trailing assistant/tool turn back to the last user message.
-    setMessages((prev) => {
+    patchConvMessages(id, (prev) => {
       let cut = prev.length;
       for (let i = prev.length - 1; i >= 0; i--) {
         if (prev[i].role === "user") break;
@@ -736,26 +869,24 @@ export function App() {
       }
       return prev.slice(0, cut);
     });
-    runStream((h) =>
-      api.regenerate(
-        { ...genParamsFrom(settings), conversation_id: activeConvId },
-        h,
-      ),
+    runStream(id, (h) =>
+      api.regenerate({ ...genParamsFrom(settings), conversation_id: id }, h),
     );
   };
 
   const editMessage = (messageId: number, newText: string) => {
     if (!settings || !settings.model || activeConvId == null) return;
-    setMessages((prev) => {
+    const id = activeConvId;
+    patchConvMessages(id, (prev) => {
       const pos = prev.findIndex((m) => m.id === messageId);
       const prefix = pos >= 0 ? prev.slice(0, pos) : prev;
       return [...prefix, { id: null, role: "user", text: newText }];
     });
-    runStream((h) =>
+    runStream(id, (h) =>
       api.editMessage(
         {
           ...genParamsFrom(settings),
-          conversation_id: activeConvId!,
+          conversation_id: id,
           message_id: messageId,
           new_text: newText,
         },
@@ -765,6 +896,7 @@ export function App() {
   };
 
   const navigateSibling = async (messageId: number, dir: -1 | 1) => {
+    if (activeConvId == null) return;
     const info = siblingMap[messageId];
     if (!info || info.total <= 1) return;
     const targetIdx = info.index + dir;
@@ -774,22 +906,23 @@ export function App() {
     const prefix = messages.slice(0, pos);
     const suffix = await api.walkFrom(info.ids[targetIdx]);
     const next = [...prefix, ...suffix.map(toChatMessage)];
-    setMessages(next);
+    setConvMessages(activeConvId, next);
     await buildSiblingMap(next);
   };
 
   const stop = async () => {
-    await api.cancelStream();
+    if (activeConvId == null || activeConvId < 0) return;
+    await api.cancelStream(activeConvId);
   };
 
   const resolveTool = async (decision: ApprovalDecision) => {
-    if (!pendingApproval) return;
+    if (!pendingApproval || activeConvId == null) return;
     await api.resolveTool(pendingApproval.id, decision);
-    setPendingApproval(null);
+    clearPending(activeConvId);
   };
 
   const exportConversation = async () => {
-    if (activeConvId == null) return;
+    if (activeConvId == null || activeConvId < 0) return;
     try {
       const path = await api.exportConversationFile(activeConvId);
       setNotice(`Exported to ${path}`);
@@ -932,6 +1065,7 @@ export function App() {
         conversations={shownConversations}
         projects={projects}
         activeConvId={activeConvId}
+        streamingIds={streamingIds}
         onSelectConv={selectConv}
         onNewChat={newChat}
         onSearch={onSearch}
@@ -952,6 +1086,13 @@ export function App() {
           });
           if (!ok) return;
           await api.deleteConversation(id);
+          setConvStore((s) => {
+            if (!(id in s)) return s;
+            const n = { ...s };
+            delete n[id];
+            return n;
+          });
+          clearPending(id);
           if (activeConvId === id) newChat();
           refreshConversations();
         }}
@@ -1040,7 +1181,7 @@ export function App() {
             onChangeEndpoint={changeEndpoint}
             onOpenParams={() => setShowSettings(true)}
             onExport={exportConversation}
-            canExport={activeConvId != null}
+            canExport={activeConvId != null && activeConvId > 0}
             onOpenArtifact={openArtifact}
             artifactCount={artifacts.length}
             artifactOpen={dockOpen && dockTab === "artifacts"}

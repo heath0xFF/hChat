@@ -54,7 +54,8 @@ export const api = {
   saveDraft: (id: number, text: string) =>
     invoke<void>("save_draft", { id, text }),
 
-  cancelStream: () => invoke<void>("cancel_stream"),
+  cancelStream: (conversationId: number) =>
+    invoke<void>("cancel_stream", { conversationId }),
   resolveTool: (callId: string, decision: "approve" | "approve_all" | "deny") =>
     invoke<void>("resolve_tool", { callId, decision }),
   exportConversationFile: (id: number) =>

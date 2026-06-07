@@ -24,9 +24,11 @@ pub struct PendingApproval {
 pub struct AppState {
     pub storage: Mutex<Storage>,
     pub config: Mutex<Config>,
-    /// Cancellation token for the in-flight chat stream, if any. Replaced on
-    /// each `send_message`; `cancel_stream` fires it.
-    pub cancel: Mutex<Option<CancellationToken>>,
+    /// Cancellation tokens for in-flight chat streams, keyed by
+    /// `conversation_id`. Each `run_turn` registers its token under its
+    /// conversation; `cancel_stream(conversation_id)` fires (and removes) just
+    /// that one, so streams in different chats run and cancel independently.
+    pub cancel: Mutex<HashMap<i64, CancellationToken>>,
     /// Tool calls awaiting user approval, keyed by tool_call id. The streaming
     /// task parks a oneshot here and emits a `tool_approval` event; the
     /// `resolve_tool` command fulfills it with the user's decision.
@@ -49,7 +51,7 @@ impl AppState {
         Self {
             storage: Mutex::new(storage),
             config: Mutex::new(config),
-            cancel: Mutex::new(None),
+            cancel: Mutex::new(HashMap::new()),
             pending_approvals: Mutex::new(HashMap::new()),
             auto_approved: Mutex::new(HashSet::new()),
             mcp: McpManager::new(),

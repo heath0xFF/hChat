@@ -901,8 +901,8 @@ fn is_local_host(url: &str) -> bool {
 // ---------- streaming chat ----------
 
 #[tauri::command]
-pub fn cancel_stream(state: State<'_, AppState>) {
-    if let Some(token) = state.cancel.lock().unwrap().take() {
+pub fn cancel_stream(state: State<'_, AppState>, conversation_id: i64) {
+    if let Some(token) = state.cancel.lock().unwrap().remove(&conversation_id) {
         token.cancel();
     }
 }
@@ -1162,6 +1162,15 @@ async fn run_turn(
     first_assistant_branch_index: i64,
     on_event: &Channel<ChatEvent>,
 ) -> (Option<i64>, bool) {
+    // Register the cancellation token up front (before any `.await`) so a
+    // `cancel_stream` arriving during tool/MCP discovery isn't a no-op.
+    let cancel = CancellationToken::new();
+    state
+        .cancel
+        .lock()
+        .unwrap()
+        .insert(conversation_id, cancel.clone());
+
     // User tools (loaded fresh each turn so edits hot-reload) + tools/skills
     // from the ~/.agents convention (user-level and project-local).
     let mut tool_defs: Vec<ToolDef> = tools::load_from_dir(&tools::user_tools_dir());
@@ -1180,9 +1189,6 @@ async fn run_turn(
     } else {
         Some(api_specs)
     };
-
-    let cancel = CancellationToken::new();
-    *state.cancel.lock().unwrap() = Some(cancel.clone());
 
     let mut final_message_id = None;
     let mut errored = false;
@@ -1357,7 +1363,7 @@ async fn run_turn(
         }
     }
 
-    *state.cancel.lock().unwrap() = None;
+    state.cancel.lock().unwrap().remove(&conversation_id);
     (final_message_id, errored)
 }
 

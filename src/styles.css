@@ -313,6 +313,29 @@ button {
   color: var(--muted);
 }
 
+/* Live indicator for a conversation whose stream is in flight (occupies the
+   same slot as the runtime badge). */
+.conv-streaming {
+  flex: 0 0 auto;
+  width: 7px;
+  height: 7px;
+  margin: 0 4px;
+  border-radius: 50%;
+  background: var(--accent);
+  animation: conv-pulse 1s ease-in-out infinite;
+}
+@keyframes conv-pulse {
+  0%,
+  100% {
+    opacity: 0.3;
+    transform: scale(0.8);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+}
+
 .conv-item .pin {
   opacity: 0;
   font-size: 11px;
