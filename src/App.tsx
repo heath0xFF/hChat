@@ -163,6 +163,7 @@ export function App() {
   const reasoningBuf = useRef("");
   const contentBuf = useRef("");
   const convIdRef = useRef<number | null>(null);
+  const configRef = useRef<Config | null>(null);
   const hotkeyRef = useRef<(e: KeyboardEvent) => void>(() => {});
   const viewRef = useRef(view);
   viewRef.current = view;
@@ -278,9 +279,11 @@ export function App() {
       .catch(() => setAgents({ commands: [], skills: [] }));
   }, [settings?.working_dir]);
 
-  // Apply theme / fonts / UI scale from config.
+  // Apply theme / fonts / UI scale from config; mirror config into a ref so the
+  // debounced appearance save can read the latest value.
   useEffect(() => {
     if (config) applyAppearance(config);
+    configRef.current = config;
   }, [config]);
 
   // Global hotkeys — bound once, dispatched through a ref to the latest closure.
@@ -795,6 +798,18 @@ export function App() {
     }
   };
 
+  // Live appearance edits from the Settings modal: apply to the DOM immediately
+  // (via the config effect) and persist on a short debounce, so theme/fonts/
+  // scale take effect without clicking Save.
+  const appearanceSaveTimer = useRef<number | null>(null);
+  const applyAppearanceLive = (patch: Partial<Config>) => {
+    setConfig((prev) => (prev ? { ...prev, ...patch } : prev));
+    if (appearanceSaveTimer.current) clearTimeout(appearanceSaveTimer.current);
+    appearanceSaveTimer.current = window.setTimeout(() => {
+      if (configRef.current) void api.saveConfig(configRef.current);
+    }, 400);
+  };
+
   const saveConfig = async (next: Config) => {
     await api.saveConfig(next);
     setConfig(next);
@@ -1080,6 +1095,7 @@ export function App() {
           config={config}
           onClose={() => setShowSettings(false)}
           onSave={saveConfig}
+          onApplyAppearance={applyAppearanceLive}
           onClearHistory={async () => {
             const ok = await dialog.confirm(
               "Delete ALL chat history? Every conversation and its messages will be permanently removed. Projects are kept.",
