@@ -27,7 +27,8 @@
       "Bash(/System/Library/Frameworks/CoreServices.framework/Frameworks/LaunchServices.framework/Support/lsregister -f /Applications/hChat.app)",
       "Bash(touch /Applications/hChat.app)",
       "Read(//Applications/hChat.app/**)",
-      "Bash(npx tsc *)"
+      "Bash(npx tsc *)",
+      "Bash(npx vite *)"
     ]
   }
 }
