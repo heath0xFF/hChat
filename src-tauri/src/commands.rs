@@ -730,11 +730,11 @@ pub fn delete_all_conversations(state: State<'_, AppState>) -> Result<(), String
 
 #[tauri::command]
 pub fn rename_conversation(state: State<'_, AppState>, id: i64, title: String) {
-    state
-        .storage
-        .lock()
-        .unwrap()
-        .update_conversation_title(id, &title);
+    let storage = state.storage.lock().unwrap();
+    storage.update_conversation_title(id, &title);
+    // A manual rename is intentional — mark it so the one-shot AI auto-titler
+    // won't overwrite the user's chosen name on the next turn.
+    storage.mark_auto_titled(id);
 }
 
 #[tauri::command]
