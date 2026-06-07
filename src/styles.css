@@ -1277,7 +1277,8 @@ select.model-select {
   padding-left: 0;
 }
 .dock .charts {
-  grid-template-columns: 1fr;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
 }
 
 /* ---------- usage table ---------- */
