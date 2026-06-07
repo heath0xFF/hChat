@@ -1735,6 +1735,9 @@ select.model-select {
   color: var(--text);
   padding: 8px 10px;
   font-size: 13px;
+  /* Explicit so <select> (which ignores the inherited body line-height)
+     computes the same height as the text/number inputs beside it. */
+  line-height: 1.5;
   outline: none;
   font-family: var(--sans);
 }

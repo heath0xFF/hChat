@@ -8,6 +8,8 @@ interface Props {
   onClose: () => void;
   onSave: (config: Config) => void;
   onClearHistory: () => void;
+  /** Apply (and persist) an appearance change immediately, without Save. */
+  onApplyAppearance: (patch: Partial<Config>) => void;
 }
 
 type Section =
@@ -72,7 +74,13 @@ function HotkeyInput({
   );
 }
 
-export function SettingsModal({ config, onClose, onSave, onClearHistory }: Props) {
+export function SettingsModal({
+  config,
+  onClose,
+  onSave,
+  onClearHistory,
+  onApplyAppearance,
+}: Props) {
   const [c, setC] = useState<Config>(structuredClone(config));
   const [section, setSection] = useState<Section>("general");
   const [mcpStatus, setMcpStatus] = useState<McpStatus[]>([]);
@@ -105,6 +113,12 @@ export function SettingsModal({ config, onClose, onSave, onClearHistory }: Props
 
   const set = <K extends keyof Config>(k: K, v: Config[K]) =>
     setC((prev) => ({ ...prev, [k]: v }));
+  // Appearance fields update the local draft AND apply live (persisted on a
+  // debounce by the parent), so they take effect without clicking Save.
+  const setAppearance = <K extends keyof Config>(k: K, v: Config[K]) => {
+    set(k, v);
+    onApplyAppearance({ [k]: v } as Partial<Config>);
+  };
   const numOrNull = (s: string): number | null =>
     s.trim() === "" ? null : Number(s);
 
@@ -419,7 +433,7 @@ export function SettingsModal({ config, onClose, onSave, onClearHistory }: Props
                     <label>Theme</label>
                     <select
                       value={c.theme || (c.dark_mode ? "dark" : "light")}
-                      onChange={(e) => set("theme", e.target.value)}
+                      onChange={(e) => setAppearance("theme", e.target.value)}
                     >
                       {THEMES.map((t) => (
                         <option key={t.key} value={t.key}>
@@ -436,7 +450,9 @@ export function SettingsModal({ config, onClose, onSave, onClearHistory }: Props
                       min="0.75"
                       max="2"
                       value={c.ui_scale}
-                      onChange={(e) => set("ui_scale", Number(e.target.value))}
+                      onChange={(e) =>
+                        setAppearance("ui_scale", Number(e.target.value))
+                      }
                     />
                   </div>
                 </div>
@@ -448,7 +464,9 @@ export function SettingsModal({ config, onClose, onSave, onClearHistory }: Props
                     <input
                       type="number"
                       value={c.font_size}
-                      onChange={(e) => set("font_size", Number(e.target.value))}
+                      onChange={(e) =>
+                        setAppearance("font_size", Number(e.target.value))
+                      }
                     />
                   </div>
                   <div style={{ flex: 1 }}>
@@ -457,7 +475,7 @@ export function SettingsModal({ config, onClose, onSave, onClearHistory }: Props
                       type="number"
                       value={c.mono_font_size}
                       onChange={(e) =>
-                        set("mono_font_size", Number(e.target.value))
+                        setAppearance("mono_font_size", Number(e.target.value))
                       }
                     />
                   </div>
@@ -470,7 +488,7 @@ export function SettingsModal({ config, onClose, onSave, onClearHistory }: Props
                     <input
                       placeholder="(default)"
                       value={c.font_family}
-                      onChange={(e) => set("font_family", e.target.value)}
+                      onChange={(e) => setAppearance("font_family", e.target.value)}
                     />
                   </div>
                   <div style={{ flex: 1 }}>
@@ -478,7 +496,9 @@ export function SettingsModal({ config, onClose, onSave, onClearHistory }: Props
                     <input
                       placeholder="(default)"
                       value={c.mono_font_family}
-                      onChange={(e) => set("mono_font_family", e.target.value)}
+                      onChange={(e) =>
+                        setAppearance("mono_font_family", e.target.value)
+                      }
                     />
                   </div>
                 </div>
