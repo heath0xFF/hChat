@@ -1,0 +1,12 @@
+yeah just pr and merge automatically lol
+
+---
+
+ok we need to extend this to the settings modal as well
+
+---
+
+ok couple things: 
+
+1. [Image #1] -- when the sidebar opens on my laptop screen, the icons get all fucky
+2. when i open the status sidebar in a chat it _should_ default to the backend that the chat is on.
