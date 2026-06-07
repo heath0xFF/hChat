@@ -1,0 +1,25 @@
+{
+  "cli_version": "0.7.5",
+  "checkpoint_id": "2909ebbd7e42",
+  "strategy": "manual-commit",
+  "branch": "artifact-titles",
+  "checkpoints_count": 0,
+  "files_touched": [
+    "src/lib/artifacts.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/29/09ebbd7e42/0/metadata.json",
+      "transcript": "/29/09ebbd7e42/0/full.jsonl",
+      "content_hash": "/29/09ebbd7e42/0/content_hash.txt",
+      "prompt": "/29/09ebbd7e42/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 147,
+    "cache_creation_tokens": 7585,
+    "cache_read_tokens": 2146704,
+    "output_tokens": 6033,
+    "api_call_count": 9
+  }
+}

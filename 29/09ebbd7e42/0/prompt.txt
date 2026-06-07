@@ -1,0 +1,3 @@
+ok nice we're getting through some good UI bugs. 
+
+next thing to tackle is that the artifacts are all called the same thing when there are multiple of the same type... how do we fix it?
