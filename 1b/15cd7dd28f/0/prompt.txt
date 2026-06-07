@@ -1,0 +1,1 @@
+drag and drop does not work, but the context menu does work.

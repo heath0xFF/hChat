@@ -1,0 +1,25 @@
+{
+  "cli_version": "0.7.5",
+  "checkpoint_id": "1b15cd7dd28f",
+  "strategy": "manual-commit",
+  "branch": "fix-dragdrop",
+  "checkpoints_count": 0,
+  "files_touched": [
+    "src-tauri/tauri.conf.json"
+  ],
+  "sessions": [
+    {
+      "metadata": "/1b/15cd7dd28f/0/metadata.json",
+      "transcript": "/1b/15cd7dd28f/0/full.jsonl",
+      "content_hash": "/1b/15cd7dd28f/0/content_hash.txt",
+      "prompt": "/1b/15cd7dd28f/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 141,
+    "cache_creation_tokens": 2712,
+    "cache_read_tokens": 1282117,
+    "output_tokens": 2411,
+    "api_call_count": 6
+  }
+}
