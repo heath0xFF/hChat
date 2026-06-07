@@ -28,6 +28,7 @@ export const api = {
     invoke<ConversationData>("load_conversation", { id }),
   deleteConversation: (id: number) =>
     invoke<void>("delete_conversation", { id }),
+  deleteAllConversations: () => invoke<void>("delete_all_conversations"),
   renameConversation: (id: number, title: string) =>
     invoke<void>("rename_conversation", { id, title }),
   setPinned: (id: number, pinned: boolean) =>

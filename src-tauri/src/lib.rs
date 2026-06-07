@@ -87,6 +87,7 @@ pub fn run() {
             commands::list_conversations,
             commands::load_conversation,
             commands::delete_conversation,
+            commands::delete_all_conversations,
             commands::rename_conversation,
             commands::set_pinned,
             commands::usage_stats,
