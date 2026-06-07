@@ -1,0 +1,27 @@
+{
+  "cli_version": "0.7.5",
+  "checkpoint_id": "df5d4a329c26",
+  "strategy": "manual-commit",
+  "branch": "appearance-live-and-select-height",
+  "checkpoints_count": 0,
+  "files_touched": [
+    "src/App.tsx",
+    "src/components/SettingsModal.tsx",
+    "src/styles.css"
+  ],
+  "sessions": [
+    {
+      "metadata": "/df/5d4a329c26/0/metadata.json",
+      "transcript": "/df/5d4a329c26/0/full.jsonl",
+      "content_hash": "/df/5d4a329c26/0/content_hash.txt",
+      "prompt": "/df/5d4a329c26/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 574,
+    "cache_creation_tokens": 18273,
+    "cache_read_tokens": 8621886,
+    "output_tokens": 14826,
+    "api_call_count": 29
+  }
+}

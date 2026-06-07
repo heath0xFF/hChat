@@ -1,0 +1,4 @@
+nice work! it works great -- two things: 
+
+1. [Image #4] the theme dropdown box is not the same height as the other boxes
+2. it would be nice if the appearance settings automatically took effect rather than having to click save.
