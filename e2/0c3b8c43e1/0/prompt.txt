@@ -1,0 +1,1 @@
+ok another bug -- in chats that have artifacts -- it's good that it auto opens the artifact renderer automatically. but when i continue chatting, and there are not more artifacts generated in more messages and i close the artifact side bar, as soon as the llm response finishes the artifact sidebar opens again
