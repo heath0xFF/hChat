@@ -1,5 +1,7 @@
 # Fornax
 
+<img width="1862" height="1221" alt="image" src="https://github.com/user-attachments/assets/27b398ab-692f-48f2-b225-9cbf0787299c" />
+
 A local-LLM **workstation** for your desktop: a fast chat client, a live
 inference-metrics dashboard, an artifact-rendering panel, and per-request usage
 tracking — over any OpenAI-compatible endpoint.
