@@ -1,0 +1,43 @@
+{
+  "cli_version": "0.7.5",
+  "checkpoint_id": "31910962e6a3",
+  "session_id": "d24da4b1-2f25-4b20-9b76-bd50a8faf6d5",
+  "strategy": "manual-commit",
+  "created_at": "2026-06-07T00:00:16.322314Z",
+  "branch": "esc-closes-settings",
+  "checkpoints_count": 0,
+  "files_touched": [
+    "src/components/SettingsModal.tsx"
+  ],
+  "agent": "Claude Code",
+  "model": "",
+  "turn_id": "c49a48628542",
+  "token_usage": {
+    "input_tokens": 6537,
+    "cache_creation_tokens": 26124,
+    "cache_read_tokens": 654661,
+    "output_tokens": 6596,
+    "api_call_count": 20
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-06-07T00:00:16.319457Z",
+    "agent_lines": 14,
+    "agent_removed": 0,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 14,
+    "total_lines_changed": 14,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    }
+  ]
+}
