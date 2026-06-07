@@ -1,0 +1,1 @@
+[Image #2] ok in the status right sidebar -- i'd like for there to be two rows, with to columns. top row is token throughput and ttft graphs and the second row is the GPU util and power side by side.
