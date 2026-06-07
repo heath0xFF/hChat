@@ -658,6 +658,10 @@ export function App() {
   const runStream = async (
     starter: (h: (ev: ChatEvent) => void) => Promise<number>,
   ) => {
+    // Snapshot artifacts present before this turn so we only auto-open the dock
+    // for a genuinely new one — not re-open it after every reply in a chat that
+    // already has artifacts.
+    const priorArtifactCodes = new Set(artifacts.map((a) => a.code));
     setError(null);
     setPendingApproval(null);
     reasoningBuf.current = "";
@@ -684,9 +688,11 @@ export function App() {
       setMetrics((m) => ({ ...m, activeRequests: 0 }));
       if (id != null) {
         const msgs = await reloadAndIndex(id);
-        // Auto-open a freshly generated previewable artifact (HTML/SVG/MD),
-        // Claude-Desktop style.
-        const preview = [...collectArtifacts(msgs)].reverse().find(isPreviewable);
+        // Auto-open only a freshly generated previewable artifact (HTML/SVG/MD),
+        // Claude-Desktop style — one whose code wasn't already in the chat.
+        const preview = [...collectArtifacts(msgs)]
+          .reverse()
+          .find((a) => isPreviewable(a) && !priorArtifactCodes.has(a.code));
         if (preview) {
           setCurrentArtifact(preview);
           setDockTab("artifacts");
