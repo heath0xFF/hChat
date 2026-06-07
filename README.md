@@ -62,7 +62,8 @@ Electron app.
 - **SQLite history** with auto-titles, search, pin, rename, and markdown export;
   group chats into **projects** (drag a chat onto a project; pin projects + chats
   to the top)
-- Light/dark themes, configurable fonts and UI scale; `config.toml` stays the
+- Themes — dark, light, and the four **Catppuccin** flavors (Mocha, Macchiato,
+  Frappé, Latte) — plus configurable fonts and UI scale; `config.toml` stays the
   hand-editable source of truth
 - Cross-platform (macOS, Linux)
 

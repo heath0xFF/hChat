@@ -83,7 +83,7 @@ const MONO_STACK = `"SF Mono", "JetBrains Mono", "Menlo", ui-monospace, monospac
 
 function applyAppearance(c: Config) {
   const root = document.documentElement;
-  root.classList.toggle("light", !c.dark_mode);
+  root.dataset.theme = c.theme || (c.dark_mode ? "dark" : "light");
   root.style.setProperty("--app-font-size", `${c.font_size}px`);
   root.style.setProperty("--mono-font-size", `${c.mono_font_size}px`);
   root.style.setProperty("zoom", String(c.ui_scale));

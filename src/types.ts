@@ -47,6 +47,7 @@ export interface Config {
   mono_font_size: number;
   ui_scale: number;
   dark_mode: boolean;
+  theme: string;
   default_endpoint: string;
   system_prompt: string;
   temperature: number;

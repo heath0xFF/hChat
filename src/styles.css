@@ -25,8 +25,11 @@
   --mono-font-size: 13px;
 }
 
-/* Light theme — applied when config.dark_mode is false (`.light` on <html>). */
-:root.light {
+/* Themes are selected via `data-theme` on <html> (set by applyAppearance).
+   The base :root above is the default dark theme (data-theme="dark"). */
+
+/* Light */
+:root[data-theme="light"] {
   --bg: #f6f6f7;
   --bg-deep: #ececed;
   --inset: #eef0f2;
@@ -41,6 +44,91 @@
   --faint: #b6b6c0;
   --accent: #128a82;
   --accent-dim: #0f6f68;
+}
+
+/* Catppuccin Mocha (dark) — https://catppuccin.com/palette
+   Accent is kept teal across all flavors to preserve Fornax's identity. */
+:root[data-theme="catppuccin-mocha"] {
+  --bg: #1e1e2e;
+  --bg-deep: #11111b;
+  --inset: #181825;
+  --panel: #242438;
+  --panel-2: #2c2c42;
+  --panel-3: #363a4f;
+  --border: #363a4f;
+  --border-soft: #292c3c;
+  --text: #cdd6f4;
+  --muted: #a6adc8;
+  --dim: #7f849c;
+  --faint: #585b70;
+  --accent: #94e2d5;
+  --accent-dim: #5fb0a6;
+  --danger: #f38ba8;
+  --warn: #f9e2af;
+  --user: #89b4fa;
+}
+
+/* Catppuccin Macchiato (dark) */
+:root[data-theme="catppuccin-macchiato"] {
+  --bg: #24273a;
+  --bg-deep: #181926;
+  --inset: #1e2030;
+  --panel: #2a2e44;
+  --panel-2: #333749;
+  --panel-3: #3b3f54;
+  --border: #3b3f54;
+  --border-soft: #2a2d40;
+  --text: #cad3f5;
+  --muted: #a5adcb;
+  --dim: #8087a2;
+  --faint: #5b6078;
+  --accent: #8bd5ca;
+  --accent-dim: #5aa79e;
+  --danger: #ed8796;
+  --warn: #eed49f;
+  --user: #8aadf4;
+}
+
+/* Catppuccin Frappé (dark) */
+:root[data-theme="catppuccin-frappe"] {
+  --bg: #303446;
+  --bg-deep: #232634;
+  --inset: #292c3c;
+  --panel: #363a4c;
+  --panel-2: #3e4256;
+  --panel-3: #474b60;
+  --border: #474b60;
+  --border-soft: #363a4c;
+  --text: #c6d0f5;
+  --muted: #a5adce;
+  --dim: #838ba7;
+  --faint: #626880;
+  --accent: #81c8be;
+  --accent-dim: #569d94;
+  --danger: #e78284;
+  --warn: #e5c890;
+  --user: #8caaee;
+}
+
+/* Catppuccin Latte (light) */
+:root[data-theme="catppuccin-latte"] {
+  --bg: #eff1f5;
+  --bg-deep: #dce0e8;
+  --inset: #e6e9ef;
+  --panel: #ffffff;
+  --panel-2: #e6e9ef;
+  --panel-3: #dce0e8;
+  --border: #ccd0da;
+  --border-soft: #e6e9ef;
+  --text: #4c4f69;
+  --muted: #6c6f85;
+  --dim: #8c8fa1;
+  --faint: #acb0be;
+  --accent: #179299;
+  --accent-dim: #11807e;
+  --danger: #d20f39;
+  --warn: #df8e1d;
+  --user: #1e66f5;
 }
 
 * {
@@ -75,11 +163,11 @@ button {
   height: 9px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #2a2a30;
+  background: var(--panel-3);
   border-radius: 6px;
 }
 ::-webkit-scrollbar-thumb:hover {
-  background: #3a3a42;
+  background: var(--faint);
 }
 ::-webkit-scrollbar-track {
   background: transparent;
@@ -612,7 +700,7 @@ select.model-select {
   border: 1px solid var(--border-soft);
   border-radius: 8px;
   overflow: hidden;
-  background: #0a0a0c;
+  background: var(--bg-deep);
 }
 .code-block .code-head {
   display: flex;
@@ -768,7 +856,7 @@ select.model-select {
   font-family: var(--mono);
   font-size: 11.5px;
   color: var(--muted);
-  background: #0a0a0c;
+  background: var(--bg-deep);
   border: 1px solid var(--border-soft);
   border-radius: 6px;
   padding: 8px 10px;
@@ -1092,7 +1180,7 @@ select.model-select {
   font-family: var(--mono);
   font-size: 11.5px;
   color: var(--dim);
-  background: #0a0a0c;
+  background: var(--bg-deep);
   border: 1px solid var(--border-soft);
   border-radius: 8px;
   padding: 12px;
