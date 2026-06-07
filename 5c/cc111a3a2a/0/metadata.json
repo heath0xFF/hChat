@@ -1,0 +1,99 @@
+{
+  "cli_version": "0.7.5",
+  "checkpoint_id": "5ccc111a3a2a",
+  "session_id": "d24da4b1-2f25-4b20-9b76-bd50a8faf6d5",
+  "strategy": "manual-commit",
+  "created_at": "2026-06-07T01:15:35.587029Z",
+  "branch": "webview-dialogs",
+  "checkpoints_count": 0,
+  "files_touched": [
+    "src-tauri/src/commands.rs",
+    "src-tauri/src/core/storage.rs",
+    "src-tauri/src/lib.rs",
+    "src/App.tsx",
+    "src/components/ChatView.tsx",
+    "src/components/Dialog.tsx",
+    "src/components/SettingsModal.tsx",
+    "src/components/Sidebar.tsx",
+    "src/components/UsageView.tsx",
+    "src/lib/tauri.ts",
+    "src/main.tsx",
+    "src/styles.css"
+  ],
+  "agent": "Claude Code",
+  "model": "",
+  "turn_id": "4f2f74d79929",
+  "checkpoint_transcript_start": 249,
+  "transcript_lines_at_start": 249,
+  "token_usage": {
+    "input_tokens": 1326,
+    "cache_creation_tokens": 57799,
+    "cache_read_tokens": 5899570,
+    "output_tokens": 31784,
+    "api_call_count": 64
+  },
+  "skill_events_version": 1,
+  "skill_events": [
+    {
+      "id": "claude-skill-toolu_01P6QTPybz4onqm4nwtsdFco",
+      "event_type": "tool_invocation",
+      "skill": {
+        "name": "code-review"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "skill_tool_use",
+        "confidence": "explicit"
+      },
+      "turn_id": "4f2f74d79929",
+      "transcript_anchor": {
+        "unit": "line",
+        "start": 486,
+        "end": 487,
+        "entry_ids": [
+          "333ee8c0-7337-4559-86fb-a6440e1354ea"
+        ],
+        "tool_use_id": "toolu_01P6QTPybz4onqm4nwtsdFco"
+      },
+      "native": {
+        "tool_name": "Skill",
+        "tool_use_id": "toolu_01P6QTPybz4onqm4nwtsdFco"
+      },
+      "collapse": {
+        "target": "tool_pair",
+        "label": "Skill: code-review",
+        "default_collapsed": true
+      }
+    }
+  ],
+  "session_metrics": {
+    "turn_count": 4
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-06-07T01:15:35.573403Z",
+    "agent_lines": 261,
+    "agent_removed": 11,
+    "human_added": 15,
+    "human_modified": 13,
+    "human_removed": 0,
+    "total_committed": 289,
+    "total_lines_changed": 300,
+    "agent_percentage": 90.66666666666666,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 2,
+      "user_lines_removed": 1,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0,
+      "user_added_per_file": {
+        ".claude/settings.local.json": 2
+      },
+      "user_removed_per_file": {
+        ".claude/settings.local.json": 1
+      }
+    }
+  ]
+}

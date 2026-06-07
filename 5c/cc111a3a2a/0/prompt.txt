@@ -1,0 +1,5 @@
+ok couple of things: 
+
+1. the x button on a chat item in the left sidebar does nothing
+2. i want a "delete all chat history" button somewhere in settings
+3. project creation does not worok
