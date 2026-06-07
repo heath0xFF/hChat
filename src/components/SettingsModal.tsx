@@ -47,6 +47,8 @@ function HotkeyInput({
       onKeyDown={(e) => {
         e.preventDefault();
         if (e.key === "Escape") {
+          // Cancel hotkey capture without bubbling up to close the modal.
+          e.stopPropagation();
           (e.target as HTMLInputElement).blur();
           return;
         }
@@ -70,6 +72,18 @@ export function SettingsModal({ config, onClose, onSave }: Props) {
   useEffect(() => {
     void refreshMcp();
   }, []);
+
+  // Esc closes the settings modal (hotkey-capture inputs swallow their own Esc).
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
 
   const servers = c.mcp_servers ?? [];
   const setServers = (next: McpServer[]) => set("mcp_servers", next);
