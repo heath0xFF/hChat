@@ -10,11 +10,12 @@ endpoints — a remote NVIDIA DGX Spark running vLLM, a MacBook running oMLX (ML
 and llama.cpp (GGUF), OpenRouter, LM Studio, Ollama, etc. — and surfaces decode
 tok/s, TTFT, prefill, requests, VRAM, power, and GPU stats per backend.
 
-> **Status:** mid-rewrite. The app was originally Rust/egui; it is being rebuilt
-> as a **Tauri** app (Rust core + React/TS frontend) on the `rewrite-tauri`
-> branch. **Phase A is complete** (full chat parity). Phase B (metrics dashboard)
-> and Phase C (artifacts sidebar) are next. See the plan and roadmap in the
-> auto-memory and `/Users/heath/.claude/plans/`.
+> **Status:** the **Tauri** app (Rust core + React/TS frontend) is the current
+> codebase, migrated from the original Rust/egui app. Live: full chat parity, the
+> **metrics dashboard** (`StatusView`), the **artifacts panel** (`ArtifactPanel`)
+> — both dockable beside the chat via `RightDock` — sidebar **projects**, and
+> **themes** (dark/light/Catppuccin). See `/Users/heath/.claude/plans/` for any
+> remaining roadmap.
 
 ## Build & Run
 
@@ -73,13 +74,18 @@ Tauri splits the app into a **Rust backend** (`src-tauri/`) and a **web frontend
   is the shared streaming pipeline used by send / regenerate / edit.
 - **`lib/tauri.ts`** — typed wrappers around `invoke`/`Channel` (the only place
   that touches the Tauri API). **`types.ts`** mirrors the Rust DTOs.
-- **`components/`** — `Sidebar`, `ChatView` (topbar + composer + attachments +
-  presets), `MessageItem` (markdown, reasoning, tool chips, branch nav, inline
-  edit), `Markdown` + `CodeBlock` (react-markdown + shiki), `StatusView` (the
-  live metrics dashboard), `ArtifactPanel` (HTML/SVG/Markdown/code preview),
-  `SettingsModal`, `ApprovalCard`. `lib/artifacts.ts` extracts artifacts from
-  assistant messages; the backend `metrics` event drives `StatusView`.
-- **`styles.css`** — hand-rolled terminal-minimal dark theme (CSS variables).
+- **`components/`** — `Sidebar` (chats + projects + the move-to-project context
+  menu), `ChatView` (topbar + composer + attachments + presets), `MessageItem`
+  (markdown, reasoning, tool chips, branch nav, inline edit), `Markdown` +
+  `CodeBlock` (react-markdown + shiki), `StatusView` (the live metrics
+  dashboard), `ArtifactPanel` (HTML/SVG/Markdown/code preview), `RightDock`
+  (docks Status + Artifacts as tabs beside the chat), `Dialog` (`DialogProvider`
+  + `useDialog` — in-app confirm/prompt), `SettingsModal`, `ApprovalCard`.
+  `lib/artifacts.ts` extracts + titles artifacts from assistant messages; the
+  backend `metrics` event drives `StatusView`.
+- **`styles.css`** — hand-rolled terminal-minimal theme as CSS variables. Themes
+  (dark/light/Catppuccin) are `:root[data-theme="…"]` palette blocks; the active
+  theme is set on `<html>` by `applyAppearance` in `App.tsx`.
 
 ## Key Design Decisions
 
@@ -109,14 +115,32 @@ Tauri splits the app into a **Rust backend** (`src-tauri/`) and a **web frontend
   rename them to `core::…`.
 - `gen` is a reserved keyword (edition 2024) — the shared generation-params struct
   is named `GenParams` and its field is `gp`.
+- **No native browser dialogs.** `window.confirm` / `window.prompt` / `alert`
+  don't render in the Tauri (WKWebView) webview — they silently no-op. Use
+  `useDialog()` (`components/Dialog.tsx`) for confirm/prompt instead.
+- **HTML5 drag-and-drop** requires `dragDropEnabled: false` on the window in
+  `tauri.conf.json` (Tauri's native OS drag-drop otherwise swallows webview DnD).
+  This also disables OS file-drop — handle that via Tauri's drag-drop event if
+  ever needed.
+- **Themes**: add a flavor as a `:root[data-theme="…"]` block of CSS-variable
+  overrides in `styles.css`, then list it in `SettingsModal`'s `THEMES` and the
+  backend `THEMES` allowlist in `config.rs`. `config.theme` is the source of
+  truth; `Config::sanitize` migrates the legacy `dark_mode` flag and keeps it in
+  sync. Prefer routing component colors through the CSS variables so they theme.
+- **Projects** are organizational only — `project_id` groups chats in the
+  sidebar; nothing in `run_turn`/streaming reads it.
+- **Auto-title**: `maybe_auto_title` titles a chat once (gated by the
+  `auto_titled` flag); a manual rename sets that flag so it isn't overwritten.
 - Delivery standards for substantial work: `cargo clippy -- -D warnings` clean,
-  run the review subagent, and follow the PR ritual.
+  `tsc --noEmit` + `vite build` clean, run the review subagent, and follow the PR
+  ritual.
 
-## Not yet ported from the egui app
+## Parity with the egui app
 
-Most parity features are back: slash commands (`lib/slash.ts`), find-in-conversation
-(Cmd+F), per-conversation drafts (`save_draft` + lifted composer input), the live
-token counter (`gpt-tokenizer`), and theme/fonts/UI-scale (`applyAppearance` in
-App.tsx). Still missing: the "approve all in this conversation" tool allowlist
-(approvals are per-call), a one-click markdown-export button (the `export_conversation`
-command exists), and per-message hover timestamps.
+Parity is effectively complete: slash commands (`lib/slash.ts`),
+find-in-conversation (Cmd+F), per-conversation drafts (`save_draft` + lifted
+composer input), the live token counter (`gpt-tokenizer`), theme/fonts/UI-scale
+(`applyAppearance`), the "approve all in this conversation" allowlist
+(`AppState.auto_approved`), one-click markdown export (the `export` button +
+`export_conversation`), and per-message hover timestamps. New beyond the egui
+app: the metrics dock, artifacts panel, projects, in-app dialogs, and themes.

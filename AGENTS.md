@@ -1,10 +1,10 @@
 # Fornax Agent Instructions
 
 Fornax is a **Tauri** app (Rust backend + React/TS frontend) — a local-LLM
-workstation: chat client + live inference-metrics dashboard + (planned) artifact
-rendering. It is mid-rewrite from the original Rust/egui app on the
-`rewrite-tauri` branch; **Phase A (chat parity) is complete**, Phase B (metrics)
-and Phase C (artifacts) are next.
+workstation: chat client + live inference-metrics dashboard + artifacts panel.
+Migrated from the original Rust/egui app; chat parity, the metrics dashboard, the
+artifacts panel, sidebar projects, and themes (dark/light/Catppuccin) are all
+live.
 
 ## Commands
 
@@ -26,21 +26,32 @@ use a project-local cache: `npm install --cache "$PWD/.npm-cache"`.
   core modules at the crate root via `#[path = "core/…"]` and registers every
   `#[tauri::command]`.
 - **`state.rs`**: `AppState` (managed by Tauri) — `Mutex<Storage>`,
-  `Mutex<Config>`, `Mutex<Vec<ToolDef>>`, the stream `CancellationToken`, and the
-  `pending_approvals` oneshot map.
+  `Mutex<Config>`, the stream `CancellationToken`, the `pending_approvals`
+  oneshot map, the per-conversation `auto_approved` allowlist, and the
+  `Arc<McpManager>`.
 - **`commands.rs`**: the command layer replacing the egui loop. DTOs + commands;
   chat orchestration is `run_turn` (tool loop) calling `stream_once`.
+- **`mcp/`**: MCP client manager (`rmcp` SDK) — connects stdio servers, discovers
+  tools, routes `mcp_<server>_<tool>` calls; merged into the tool set in `run_turn`.
+- **`metrics/`**: the ~1.5s metrics poller — GPU (`gpu.rs`: macmon / remote
+  `fornax-agent`) + server (`prometheus.rs`: vLLM/llama.cpp/llama-swap `/metrics`
+  scrape); emits the `metrics` event.
 - **`core/`**: reused UI-agnostic modules — `api.rs` (OpenAI client, SSE
   streaming, `fetch_models`), `message.rs`, `storage.rs` (SQLite + branching tree
-  + presets), `config.rs` (TOML), `tools.rs`, `markdown.rs`, `slash.rs`.
+  + presets + projects), `config.rs` (TOML), `tools.rs`, `agents.rs` (`~/.agents`
+  loader), `markdown.rs`, `slash.rs`.
 
 ### Frontend — `src/`
 - **`App.tsx`**: top-level state; `runStream(starter)` is the shared streaming
-  pipeline for send / regenerate / edit.
+  pipeline for send / regenerate / edit; `applyAppearance` sets the theme/fonts.
 - **`lib/tauri.ts`**: the only place that calls `invoke`/`Channel`. **`types.ts`**
-  mirrors the Rust DTOs — keep them in sync.
-- **`components/`**: `Sidebar`, `ChatView`, `MessageItem`, `Markdown`+`CodeBlock`
-  (react-markdown + shiki), `StatusView`, `SettingsModal`, `ApprovalCard`.
+  mirrors the Rust DTOs — keep them in sync. `lib/artifacts.ts` extracts + titles
+  artifacts.
+- **`components/`**: `Sidebar` (chats + projects + move-to-project menu),
+  `ChatView`, `MessageItem`, `Markdown`+`CodeBlock` (react-markdown + shiki),
+  `StatusView`, `ArtifactPanel`, `RightDock` (Status/Artifacts tabs beside the
+  chat), `Dialog` (`useDialog` — in-app confirm/prompt), `SettingsModal`,
+  `ApprovalCard`.
 
 ## Concurrency Model
 
@@ -69,6 +80,17 @@ use a project-local cache: `npm install --cache "$PWD/.npm-cache"`.
 - Adding a backend↔frontend boundary: add the `#[tauri::command]`, register it in
   `lib.rs`, add a typed wrapper in `lib/tauri.ts`, and mirror the DTO in
   `types.ts`.
+- **Native browser dialogs don't work** in the WKWebView — `window.confirm` /
+  `prompt` / `alert` silently no-op. Use `useDialog()` (`components/Dialog.tsx`).
+- **HTML5 drag-and-drop** needs `dragDropEnabled: false` on the window in
+  `tauri.conf.json` (the native OS drag-drop handler otherwise swallows webview
+  DnD; this also disables OS file-drop).
+- **Themes** are `:root[data-theme="…"]` CSS-variable blocks in `styles.css`,
+  applied to `<html>` by `applyAppearance`. To add one: a CSS block + an entry in
+  `SettingsModal`'s `THEMES` and the `config.rs` `THEMES` allowlist. `config.theme`
+  is the source of truth (`Config::sanitize` migrates/syncs the legacy `dark_mode`).
+- **Projects** are organizational only (`project_id` groups chats in the sidebar);
+  nothing in `run_turn`/streaming reads them.
 
 ## Delivery standards
 
