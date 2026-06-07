@@ -1,0 +1,1 @@
+ok now with that update, the artifacts tab shows the correct number of artifacts, but when i click it, it doesn't render any of the artifacts

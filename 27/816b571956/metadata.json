@@ -1,0 +1,25 @@
+{
+  "cli_version": "0.7.5",
+  "checkpoint_id": "27816b571956",
+  "strategy": "manual-commit",
+  "branch": "fix-artifact-tab-render",
+  "checkpoints_count": 0,
+  "files_touched": [
+    "src/App.tsx"
+  ],
+  "sessions": [
+    {
+      "metadata": "/27/816b571956/0/metadata.json",
+      "transcript": "/27/816b571956/0/full.jsonl",
+      "content_hash": "/27/816b571956/0/content_hash.txt",
+      "prompt": "/27/816b571956/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 147,
+    "cache_creation_tokens": 7100,
+    "cache_read_tokens": 2063934,
+    "output_tokens": 4832,
+    "api_call_count": 9
+  }
+}
