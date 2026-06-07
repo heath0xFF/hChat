@@ -1,0 +1,5 @@
+[Image #3] ok auto retitle is still broken and the tok/s and ttft charts are broken as well, and the formatting on the y-axis is bad
+
+---
+
+retitling doesn't work for my llama-swap setup on the dgx spark, but works when chatting with omlx on my macbook. the tftt and tok/s work for omlx as well, but not llama-swap on the dgx spark...

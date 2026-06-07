@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.7.5",
+  "checkpoint_id": "1d4c9779903f",
+  "strategy": "manual-commit",
+  "branch": "fix-llamaswap-title-charts",
+  "checkpoints_count": 0,
+  "files_touched": [
+    "src-tauri/src/commands.rs",
+    "src/components/Chart.tsx"
+  ],
+  "sessions": [
+    {
+      "metadata": "/1d/4c9779903f/0/metadata.json",
+      "transcript": "/1d/4c9779903f/0/full.jsonl",
+      "content_hash": "/1d/4c9779903f/0/content_hash.txt",
+      "prompt": "/1d/4c9779903f/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 433,
+    "cache_creation_tokens": 38477,
+    "cache_read_tokens": 3570232,
+    "output_tokens": 24322,
+    "api_call_count": 23
+  }
+}
