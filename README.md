@@ -136,35 +136,6 @@ release Rust binary, then packages a **native installer for your platform** — 
 `src-tauri/target/release/fornax` if you just want to copy that somewhere on your
 `PATH`.
 
-## Migrating from hChat
-
-Fornax was previously called **hChat**. On first launch it **automatically
-migrates** your existing data — it moves the old `hchat` directories to `fornax`
-(renaming the database file too), so your conversations, settings, and custom
-tools carry over with nothing to export or import. The new locations are:
-
-- **Conversations** (SQLite): `~/Library/Application Support/fornax/fornax.db`
-  (macOS) · `~/.local/share/fornax/fornax.db` (Linux)
-- **Config**: `~/.config/fornax/config.toml`
-- **Custom tools**: the Fornax config dir — `~/Library/Application Support/fornax/tools/`
-  (macOS) · `~/.config/fornax/tools/` (Linux)
-
-The migration only runs when the `fornax` directories don't yet exist, so it
-never clobbers a fresh install. If you'd rather keep the old data untouched, back
-it up first:
-
-```bash
-cp -r ~/.config/hchat ~/hchat-config-backup
-cp -r ~/Library/Application\ Support/hchat ~/hchat-data-backup   # macOS
-```
-
-On first launch Fornax reads your existing `config.toml` — new fields just take
-their defaults — and runs SQLite schema migrations in place, so older history
-upgrades without data loss. A corrupt config is backed up rather than overwritten.
-
-If you installed the old Homebrew build, remove it: `brew uninstall --cask hchat`
-(or `brew uninstall hchat` for the CLI binary).
-
 ## Backends
 
 Fornax is a client — point it at a running OpenAI-compatible server. Add endpoints
