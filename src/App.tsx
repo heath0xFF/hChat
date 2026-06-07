@@ -288,6 +288,18 @@ export function App() {
     return () => window.removeEventListener("keydown", h);
   }, []);
 
+  // Auto-dismiss toasts after 5s (still clickable to dismiss sooner).
+  useEffect(() => {
+    if (!error) return;
+    const t = setTimeout(() => setError(null), 5000);
+    return () => clearTimeout(t);
+  }, [error]);
+  useEffect(() => {
+    if (!notice) return;
+    const t = setTimeout(() => setNotice(null), 5000);
+    return () => clearTimeout(t);
+  }, [notice]);
+
   // Re-collect artifacts whenever the visible message path changes.
   useEffect(() => {
     setArtifacts(collectArtifacts(messages));
