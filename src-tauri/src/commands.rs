@@ -1622,7 +1622,10 @@ async fn maybe_auto_title(
         &gp.model,
         &prompt,
         api_key.as_deref(),
-        Some(32),
+        // Reasoning models (e.g. nemotron) spend tokens inside a <think> block
+        // before emitting the title; a tight cap leaves the block unclosed and
+        // strip_reasoning yields an empty string. Give them room to finish.
+        Some(512),
         Some(0.3),
     )
     .await;
