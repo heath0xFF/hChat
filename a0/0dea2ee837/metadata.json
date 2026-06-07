@@ -1,0 +1,26 @@
+{
+  "cli_version": "0.7.5",
+  "checkpoint_id": "a00dea2ee837",
+  "strategy": "manual-commit",
+  "branch": "docs-update-agent-files",
+  "checkpoints_count": 0,
+  "files_touched": [
+    "AGENTS.md",
+    "CLAUDE.md"
+  ],
+  "sessions": [
+    {
+      "metadata": "/a0/0dea2ee837/0/metadata.json",
+      "transcript": "/a0/0dea2ee837/0/full.jsonl",
+      "content_hash": "/a0/0dea2ee837/0/content_hash.txt",
+      "prompt": "/a0/0dea2ee837/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 284,
+    "cache_creation_tokens": 20577,
+    "cache_read_tokens": 4097042,
+    "output_tokens": 10630,
+    "api_call_count": 13
+  }
+}
