@@ -878,6 +878,11 @@ export function App() {
   // The dock only docks alongside the chat (not the full-page Status/Usage).
   const showDock = dockOpen && view === "chat";
 
+  // Artifact to render in the dock: the explicitly-selected one, else fall back
+  // to the latest so switching to the Artifacts tab always shows something.
+  const shownArtifact =
+    currentArtifact ?? (artifacts.length ? artifacts[artifacts.length - 1] : null);
+
   const startResize = (e: React.MouseEvent) => {
     e.preventDefault();
     document.body.style.userSelect = "none";
@@ -1050,15 +1055,15 @@ export function App() {
             />
           }
           artifacts={
-            currentArtifact ? (
+            shownArtifact ? (
               <ArtifactPanel
                 embedded
-                artifact={currentArtifact}
-                artifacts={artifacts.length > 0 ? artifacts : [currentArtifact]}
+                artifact={shownArtifact}
+                artifacts={artifacts.length > 0 ? artifacts : [shownArtifact]}
                 onSelect={(id) => {
                   const a =
                     artifacts.find((x) => x.id === id) ??
-                    (currentArtifact.id === id ? currentArtifact : null);
+                    (shownArtifact.id === id ? shownArtifact : null);
                   if (a) setCurrentArtifact(a);
                 }}
                 onClose={() => setDockOpen(false)}
