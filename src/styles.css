@@ -413,6 +413,8 @@ button {
   border-radius: 5px;
   color: var(--muted);
   text-transform: uppercase;
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 .badge.dot::before {
   content: "■";
@@ -428,6 +430,8 @@ button {
   padding: 6px 12px;
   font-size: 12.5px;
   color: var(--muted);
+  flex-shrink: 0;
+  white-space: nowrap;
 }
 .tbtn:hover {
   color: var(--text);
@@ -455,6 +459,10 @@ select.model-select {
   font-size: 13px;
   outline: none;
   max-width: 280px;
+  /* Selects absorb the shrink when the chat column narrows (dock open),
+     so the toolbar buttons keep their size instead of wrapping. */
+  min-width: 0;
+  text-overflow: ellipsis;
 }
 
 /* ---------- Chat ---------- */
