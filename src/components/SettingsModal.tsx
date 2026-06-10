@@ -16,6 +16,7 @@ type Section =
   | "general"
   | "endpoints"
   | "generation"
+  | "context"
   | "appearance"
   | "keyboard"
   | "mcp";
@@ -24,6 +25,7 @@ const SECTIONS: { key: Section; label: string }[] = [
   { key: "general", label: "General" },
   { key: "endpoints", label: "Endpoints" },
   { key: "generation", label: "Generation" },
+  { key: "context", label: "Context" },
   { key: "appearance", label: "Appearance" },
   { key: "keyboard", label: "Keyboard" },
   { key: "mcp", label: "MCP" },
@@ -300,6 +302,23 @@ export function SettingsModal({
                       />
                     </div>
                   </div>
+                  <div className="row" style={{ marginTop: 8 }}>
+                    <div style={{ flex: 1 }}>
+                      <label>Context window (tokens)</label>
+                      <input
+                        type="number"
+                        placeholder="e.g. 131072 — enables auto-compaction"
+                        value={ep.context_window ?? ""}
+                        onChange={(e) =>
+                          updateEndpoint(i, {
+                            context_window: e.target.value
+                              ? Number(e.target.value)
+                              : null,
+                          })
+                        }
+                      />
+                    </div>
+                  </div>
                 </div>
               ))}
               <button
@@ -421,6 +440,75 @@ export function SettingsModal({
                     + add stop sequence
                   </button>
                 )}
+              </div>
+            </>
+          )}
+
+          {section === "context" && (
+            <>
+              <div className="field">
+                <label style={{ textTransform: "none", letterSpacing: 0 }}>
+                  <input
+                    type="checkbox"
+                    checked={c.auto_compact}
+                    onChange={(e) => set("auto_compact", e.target.checked)}
+                  />{" "}
+                  Auto-compact long conversations
+                </label>
+                <div className="hint" style={{ marginTop: 4 }}>
+                  When a chat nears its endpoint's context window, older messages
+                  are summarized by the model and replaced with the summary.
+                  Requires the endpoint's <strong>Context window</strong> to be set.
+                </div>
+              </div>
+              <div className="field">
+                <div className="row">
+                  <div style={{ flex: 1 }}>
+                    <label>Compact at (% of window)</label>
+                    <input
+                      type="number"
+                      step="5"
+                      min="30"
+                      max="95"
+                      value={Math.round(c.compact_threshold_pct * 100)}
+                      onChange={(e) =>
+                        set(
+                          "compact_threshold_pct",
+                          e.target.value
+                            ? Number(e.target.value) / 100
+                            : c.compact_threshold_pct,
+                        )
+                      }
+                    />
+                  </div>
+                  <div style={{ flex: 1 }}>
+                    <label>Keep recent messages</label>
+                    <input
+                      type="number"
+                      step="1"
+                      min="2"
+                      max="64"
+                      value={c.compact_keep_recent}
+                      onChange={(e) =>
+                        set(
+                          "compact_keep_recent",
+                          e.target.value
+                            ? Number(e.target.value)
+                            : c.compact_keep_recent,
+                        )
+                      }
+                    />
+                  </div>
+                </div>
+              </div>
+              <div className="field">
+                <label>Summarization prompt (optional)</label>
+                <textarea
+                  rows={5}
+                  placeholder="Leave empty to use the built-in compaction prompt."
+                  value={c.compact_prompt}
+                  onChange={(e) => set("compact_prompt", e.target.value)}
+                />
               </div>
             </>
           )}

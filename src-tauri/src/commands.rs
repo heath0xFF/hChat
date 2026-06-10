@@ -138,6 +138,11 @@ pub struct ConversationData {
     pub messages: Vec<MessageDto>,
     pub settings: SettingsDto,
     pub draft: Option<String>,
+    /// Persisted compaction summary, if this conversation has been compacted.
+    pub summary: Option<String>,
+    /// The message id the summary covers up to (inclusive); the divider renders
+    /// after this message.
+    pub summary_through: Option<i64>,
 }
 
 /// Effective per-conversation settings (conversation overrides folded over the
@@ -155,6 +160,11 @@ pub struct SettingsDto {
     pub presence_penalty: Option<f32>,
     pub stop_sequences: Vec<String>,
     pub working_dir: Option<String>,
+    /// Effective auto-compaction settings (per-conversation override folded over
+    /// the global config default).
+    pub auto_compact: bool,
+    pub compact_threshold_pct: f32,
+    pub compact_keep_recent: u32,
 }
 
 /// Model + endpoint + sampling knobs shared by send/regenerate/edit. The API
@@ -174,6 +184,18 @@ pub struct GenParams {
     pub presence_penalty: Option<f32>,
     #[serde(default)]
     pub stop_sequences: Vec<String>,
+    /// Effective auto-compaction settings, already merged (global ← per-conversation)
+    /// by the frontend. The backend looks up the endpoint's `context_window` itself.
+    #[serde(default = "gp_default_true")]
+    pub auto_compact: bool,
+    #[serde(default)]
+    pub compact_threshold_pct: f32,
+    #[serde(default)]
+    pub compact_keep_recent: u32,
+}
+
+fn gp_default_true() -> bool {
+    true
 }
 
 #[derive(Deserialize)]
@@ -254,6 +276,15 @@ pub enum ChatEvent {
     },
     Done { message_id: Option<i64> },
     Error { message: String },
+    /// Auto-compaction ran: older messages up to (and including) `through_id`
+    /// were replaced by an LLM summary. The frontend renders a divider and stores
+    /// the summary so it survives reload.
+    Compacted {
+        through_id: i64,
+        summary: String,
+        /// Number of messages folded into the summary.
+        removed: usize,
+    },
 }
 
 // ---------- helpers ----------
@@ -318,6 +349,11 @@ fn effective_settings(cfg: &Config, cs: &ConversationSettings) -> SettingsDto {
             cs.stop_sequences.clone()
         },
         working_dir: cs.working_dir.clone(),
+        auto_compact: cs.auto_compact.unwrap_or(cfg.auto_compact),
+        compact_threshold_pct: cs
+            .compact_threshold_pct
+            .unwrap_or(cfg.compact_threshold_pct),
+        compact_keep_recent: cs.compact_keep_recent.unwrap_or(cfg.compact_keep_recent),
     }
 }
 
@@ -668,10 +704,13 @@ pub fn load_conversation(state: State<'_, AppState>, id: i64) -> ConversationDat
         .collect();
     let settings = effective_settings(&cfg, &storage.load_conversation_settings(id));
     let draft = storage.load_draft(id).filter(|d| !d.is_empty());
+    let (summary, summary_through) = storage.load_compaction(id);
     ConversationData {
         messages,
         settings,
         draft,
+        summary,
+        summary_through,
     }
 }
 
@@ -943,6 +982,9 @@ fn settings_from_gen(gp: &GenParams, working_dir: Option<String>) -> Conversatio
         stop_sequences: gp.stop_sequences.clone(),
         endpoint: Some(gp.endpoint.clone()),
         working_dir,
+        auto_compact: Some(gp.auto_compact),
+        compact_threshold_pct: Some(gp.compact_threshold_pct),
+        compact_keep_recent: Some(gp.compact_keep_recent),
     }
 }
 
@@ -1193,20 +1235,118 @@ async fn run_turn(
     let mut final_message_id = None;
     let mut errored = false;
 
+    // ---- Auto-compaction (runs once, before the turn) ----
+    // Load any persisted summary + the endpoint's context window / custom prompt.
+    let (mut summary, mut summary_through) = {
+        let storage = state.storage.lock().unwrap();
+        storage.load_compaction(conversation_id)
+    };
+    let (context_window, compact_prompt) = {
+        let cfg = state.config.lock().unwrap();
+        let cw = cfg
+            .saved_endpoints
+            .iter()
+            .find(|e| e.url == gp.endpoint)
+            .and_then(|e| e.context_window);
+        (cw, cfg.compact_prompt.clone())
+    };
+
+    if gp.auto_compact && !cancel.is_cancelled() {
+        if let Some(window) = context_window {
+            let threshold_pct = if gp.compact_threshold_pct.is_finite()
+                && (0.3..=0.95).contains(&gp.compact_threshold_pct)
+            {
+                gp.compact_threshold_pct
+            } else {
+                0.8
+            };
+            let keep_recent = if gp.compact_keep_recent >= 2 {
+                gp.compact_keep_recent as usize
+            } else {
+                8
+            };
+            // The live portion is everything after the existing boundary.
+            let start = live_start(&messages, summary_through);
+            let live = &messages[start..];
+            let used =
+                estimate_tokens(live) + summary.as_deref().map(|s| s.len() / 4).unwrap_or(0);
+            let threshold = (window as f32 * threshold_pct) as usize;
+
+            // Summarize everything in the live portion except the recent tail.
+            // Snap the cut DOWN to a user-message boundary so the kept tail starts
+            // a clean turn — otherwise we could fold an assistant `tool_calls`
+            // message into the summary while its matching tool results stay in the
+            // tail, leaving orphaned tool results the API rejects.
+            if used > threshold && live.len() > keep_recent {
+                let mut cut = messages.len() - keep_recent;
+                while cut > start && messages[cut].role != Role::User {
+                    cut -= 1;
+                }
+                if cut > start {
+                    let to_summarize = messages[start..cut].to_vec();
+                    // Boundary = the last message we're folding in (must be persisted).
+                    if let Some(boundary_id) = messages[cut - 1].id {
+                        if let Some(new_summary) = summarize(
+                            gp,
+                            api_key.clone(),
+                            &compact_prompt,
+                            summary.as_deref(),
+                            &to_summarize,
+                            cancel.clone(),
+                        )
+                        .await
+                        .filter(|_| !cancel.is_cancelled())
+                        {
+                            {
+                                let storage = state.storage.lock().unwrap();
+                                storage.save_compaction(
+                                    conversation_id,
+                                    &new_summary,
+                                    boundary_id,
+                                );
+                            }
+                            on_event
+                                .send(ChatEvent::Compacted {
+                                    through_id: boundary_id,
+                                    summary: new_summary.clone(),
+                                    removed: to_summarize.len(),
+                                })
+                                .ok();
+                            summary = Some(new_summary);
+                            summary_through = Some(boundary_id);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     for iteration in 0..MAX_TOOL_ITERATIONS {
         if cancel.is_cancelled() {
             break;
         }
         on_event.send(ChatEvent::TurnStart).ok();
 
-        let mut wire = Vec::with_capacity(messages.len() + 2);
+        let mut wire = Vec::with_capacity(messages.len() + 3);
         if !gp.system_prompt.trim().is_empty() {
             wire.push(Message::text(Role::System, gp.system_prompt.clone()));
         }
         if let Some(sp) = &skills_prompt {
             wire.push(Message::text(Role::System, sp.clone()));
         }
-        wire.extend(messages.iter().cloned());
+        // When the conversation has been compacted, replace everything up to the
+        // boundary with the summary (sent as a system message — multiple system
+        // messages are already used above, so this is safe across backends).
+        let start = live_start(&messages, summary_through);
+        if let Some(s) = &summary {
+            if start > 0 {
+                wire.push(Message::text(
+                    Role::System,
+                    format!("[Summary of earlier conversation]\n{s}"),
+                ));
+            }
+        }
+        wire.extend(messages[start..].iter().cloned());
 
         let outcome =
             stream_once(gp, wire, api_key.clone(), tools_api.clone(), cancel.clone(), on_event)
@@ -1410,6 +1550,135 @@ pub fn walk_from(state: State<'_, AppState>, start_id: i64) -> Vec<MessageDto> {
 
 /// Reasoning is persisted inline as a leading `<think>` block so it round-trips
 /// and the frontend can collapse it on reload.
+/// Flat per-image token estimate (real vision token counts are tile-based, not
+/// derivable from the data-URL length; this just keeps image-heavy chats from
+/// under-counting so badly that compaction never fires).
+const IMAGE_TOKEN_EST: usize = 1000;
+
+/// Coarse token estimate for the compaction trigger. ~4 chars/token matches the
+/// frontend's `gpt-tokenizer` fallback; only needs to be roughly right to decide
+/// *whether* to compact. Tool-call arguments and images count too, since they're
+/// sent on the wire. (Could be swapped for `tiktoken-rs` or the API's reported
+/// `prompt_tokens`.)
+fn estimate_tokens(messages: &[Message]) -> usize {
+    let mut chars = 0usize;
+    for m in messages {
+        for part in &m.content {
+            match part {
+                ContentPart::Text { text } => chars += text.len(),
+                ContentPart::ImageUrl { .. } => chars += IMAGE_TOKEN_EST * 4,
+            }
+        }
+        if let Some(calls) = &m.tool_calls {
+            for c in calls {
+                chars += c.function.name.len() + c.function.arguments.len();
+            }
+        }
+    }
+    chars / 4
+}
+
+/// Index of the first "live" (un-summarized) message: just past the persisted
+/// compaction boundary, or 0 when there's no boundary on the current branch
+/// (e.g. after navigating to a sibling that diverged before the boundary).
+fn live_start(messages: &[Message], summary_through: Option<i64>) -> usize {
+    summary_through
+        .and_then(|t| messages.iter().position(|m| m.id == Some(t)).map(|i| i + 1))
+        .unwrap_or(0)
+}
+
+const DEFAULT_COMPACT_PROMPT: &str = "You are a context-compaction engine. Produce a \
+dense, factual summary of the conversation so far so it can replace the original \
+messages while preserving everything needed to continue. Capture: the user's goals and \
+constraints, key decisions and their rationale, important facts/values/file paths/code \
+identifiers, the state of any ongoing task, and unresolved questions or next steps. \
+Preserve specifics over generalities. Do not add commentary, greetings, or meta text — \
+output only the summary.";
+
+/// Make a side LLM call to summarize `to_summarize` (optionally continuing a prior
+/// `existing_summary`) into a single compact string. Reuses the streaming path and
+/// drains it; returns `None` on error/empty so the caller can skip compaction.
+async fn summarize(
+    gp: &GenParams,
+    api_key: Option<String>,
+    custom_prompt: &str,
+    existing_summary: Option<&str>,
+    to_summarize: &[Message],
+    cancel: CancellationToken,
+) -> Option<String> {
+    let system = if custom_prompt.trim().is_empty() {
+        DEFAULT_COMPACT_PROMPT
+    } else {
+        custom_prompt
+    };
+
+    let mut transcript = String::new();
+    if let Some(prev) = existing_summary {
+        if !prev.trim().is_empty() {
+            transcript.push_str("Summary of the conversation before this point:\n");
+            transcript.push_str(prev);
+            transcript.push_str("\n\n");
+        }
+    }
+    transcript.push_str("Messages to fold into the summary:\n");
+    for m in to_summarize {
+        let role = role_str(&m.role);
+        let body = m.text_str();
+        if !body.trim().is_empty() {
+            transcript.push_str(&format!("\n[{role}] {body}"));
+        }
+        if let Some(calls) = &m.tool_calls {
+            for c in calls {
+                transcript.push_str(&format!(
+                    "\n[{role}] (tool call {}: {})",
+                    c.function.name, c.function.arguments
+                ));
+            }
+        }
+    }
+
+    let wire = vec![
+        Message::text(Role::System, system.to_string()),
+        Message::text(Role::User, transcript),
+    ];
+
+    let (tx, mut rx) = mpsc::unbounded_channel::<StreamEvent>();
+    let chat_params = ChatParams {
+        base_url: gp.endpoint.clone(),
+        model: gp.model.clone(),
+        messages: wire,
+        // Deterministic, no tools. Cap the summary so it stays compact and can't
+        // grow unbounded across repeated compactions.
+        temperature: Some(0.2),
+        max_tokens: Some(2048),
+        top_p: None,
+        frequency_penalty: None,
+        presence_penalty: None,
+        stop_sequences: None,
+        api_key,
+        tools: None,
+    };
+    api::stream_chat(chat_params, tx, cancel);
+
+    let mut out = String::new();
+    let mut errored = false;
+    while let Some(ev) = rx.recv().await {
+        match ev {
+            StreamEvent::Token(t) => out.push_str(&t),
+            StreamEvent::Error(_) => errored = true,
+            StreamEvent::Done => break,
+            _ => {}
+        }
+    }
+
+    let out = out.trim().to_string();
+    if errored || out.is_empty() {
+        None
+    } else {
+        Some(out)
+    }
+}
+
 fn combine_stored(reasoning: &str, content: &str) -> String {
     if reasoning.is_empty() {
         content.to_string()
@@ -1643,5 +1912,53 @@ async fn maybe_auto_title(
             storage.update_conversation_title(conversation_id, clean);
             storage.mark_auto_titled(conversation_id);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn with_id(mut m: Message, id: i64) -> Message {
+        m.id = Some(id);
+        m
+    }
+
+    #[test]
+    fn live_start_finds_boundary_or_zero() {
+        let msgs = vec![
+            with_id(Message::text(Role::User, "a".into()), 1),
+            with_id(Message::text(Role::Assistant, "b".into()), 2),
+            with_id(Message::text(Role::User, "c".into()), 3),
+            with_id(Message::text(Role::Assistant, "d".into()), 4),
+        ];
+        assert_eq!(live_start(&msgs, None), 0);
+        assert_eq!(live_start(&msgs, Some(2)), 2);
+        assert_eq!(live_start(&msgs, Some(4)), 4);
+        // Boundary id not on this branch → treat as un-compacted (full history).
+        assert_eq!(live_start(&msgs, Some(999)), 0);
+    }
+
+    #[test]
+    fn estimate_tokens_counts_text_and_images() {
+        let text = Message::text(Role::User, "x".repeat(40)); // 40 chars → ~10 tokens
+        let image = Message {
+            role: Role::User,
+            content: vec![ContentPart::ImageUrl {
+                image_url: ImageUrl {
+                    url: "data:image/png;base64,AAAA".into(),
+                    detail: None,
+                },
+            }],
+            tool_calls: None,
+            tool_call_id: None,
+            created_at: None,
+            id: None,
+            parent_id: None,
+            branch_index: 0,
+        };
+        // Images must contribute (text_str() alone would count them as 0).
+        assert_eq!(estimate_tokens(std::slice::from_ref(&text)), 10);
+        assert!(estimate_tokens(&[text, image]) >= IMAGE_TOKEN_EST + 10);
     }
 }

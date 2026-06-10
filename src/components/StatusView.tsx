@@ -2,6 +2,7 @@ import { useState } from "react";
 import type { MetricsSnapshot } from "../types";
 import { Chart } from "./Chart";
 import { BenchView } from "./BenchView";
+import { fmtTokens } from "../lib/tokens";
 
 export interface LiveMetrics {
   decode: number | null;
@@ -31,6 +32,12 @@ interface Props {
   onChangeEndpoint: (endpoint: string) => void;
   metrics: LiveMetrics;
   snapshot: MetricsSnapshot | null;
+  /** Current context size of the active chat (tokens). */
+  contextTokens?: number;
+  /** Active endpoint's context window (tokens); null/undefined ⇒ unknown. */
+  contextWindow?: number | null;
+  /** Compaction threshold fraction, for coloring the bar near the limit. */
+  compactThresholdPct?: number;
   /** True when rendered inside the right dock — hides the Benchmark mode,
    *  which needs the full-page width. */
   embedded?: boolean;
@@ -56,6 +63,9 @@ export function StatusView({
   onChangeEndpoint,
   metrics,
   snapshot,
+  contextTokens,
+  contextWindow,
+  compactThresholdPct,
   embedded,
 }: Props) {
   const [mode, setMode] = useState<"live" | "benchmark">("live");
@@ -149,6 +159,43 @@ export function StatusView({
             {running}/{running + waiting}
           </div>
         </div>
+        {contextTokens != null && (
+          <div className="tile">
+            <div className="label">Context</div>
+            {contextWindow ? (
+              (() => {
+                const pct = Math.min(1, contextTokens / contextWindow);
+                const threshold =
+                  compactThresholdPct && compactThresholdPct > 0
+                    ? compactThresholdPct
+                    : 0.8;
+                const near = pct >= threshold;
+                return (
+                  <>
+                    <div className="value" style={{ fontSize: 18 }}>
+                      {fmtTokens(contextTokens)}
+                      <span className="unit">/{fmtTokens(contextWindow)}</span>
+                    </div>
+                    <div
+                      className="ctx-bar"
+                      style={{ ["--ctx-pct" as string]: `${(pct * 100).toFixed(0)}%` }}
+                      data-near={near ? "1" : undefined}
+                    />
+                    <div className="sub">{(pct * 100).toFixed(0)}% used</div>
+                  </>
+                );
+              })()
+            ) : (
+              <>
+                <div className="value" style={{ fontSize: 18 }}>
+                  {fmtTokens(contextTokens)}
+                  <span className="unit">tok</span>
+                </div>
+                <div className="sub">set context_window</div>
+              </>
+            )}
+          </div>
+        )}
         <div className="tile">
           <div className="label">VRAM</div>
           <div className="value" style={{ fontSize: 20 }}>

@@ -67,6 +67,10 @@ pub struct Endpoint {
     /// `fornax-agent` base URL when `gpu = agent` (e.g. http://spark:9099).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent_url: Option<String>,
+    /// Model context window in tokens. `None` ⇒ unknown, which disables
+    /// auto-compaction for this endpoint (we can't compute a threshold without it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u32>,
 }
 
 impl<'de> Deserialize<'de> for Endpoint {
@@ -90,6 +94,8 @@ impl<'de> Deserialize<'de> for Endpoint {
                 gpu: GpuKind,
                 #[serde(default)]
                 agent_url: Option<String>,
+                #[serde(default)]
+                context_window: Option<u32>,
             },
         }
 
@@ -102,6 +108,7 @@ impl<'de> Deserialize<'de> for Endpoint {
                 prometheus_url,
                 gpu,
                 agent_url,
+                context_window,
             } => Ok(Endpoint {
                 url,
                 api_key,
@@ -109,6 +116,7 @@ impl<'de> Deserialize<'de> for Endpoint {
                 prometheus_url,
                 gpu,
                 agent_url,
+                context_window,
             }),
         }
     }
@@ -123,6 +131,7 @@ impl Endpoint {
             prometheus_url: None,
             gpu: GpuKind::default(),
             agent_url: None,
+            context_window: None,
         }
     }
 }
@@ -159,6 +168,12 @@ fn default_stdio() -> String {
 }
 fn default_true() -> bool {
     true
+}
+fn default_compact_threshold() -> f32 {
+    0.8
+}
+fn default_compact_keep_recent() -> u32 {
+    8
 }
 
 /// An MCP server Fornax connects to. `transport = "stdio"` spawns `command`
@@ -223,6 +238,20 @@ pub struct Config {
     /// older than that many days (on startup and whenever the Usage page loads).
     #[serde(default)]
     pub usage_retention_days: u32,
+    /// Auto-compaction: when the active history approaches the endpoint's
+    /// context window, summarize the older messages and continue from
+    /// `summary + recent tail`. Requires the endpoint's `context_window` to be set.
+    #[serde(default = "default_true")]
+    pub auto_compact: bool,
+    /// Fraction of the context window at which compaction fires (0.3..=0.95).
+    #[serde(default = "default_compact_threshold")]
+    pub compact_threshold_pct: f32,
+    /// Number of most-recent messages kept verbatim (not summarized) (2..=64).
+    #[serde(default = "default_compact_keep_recent")]
+    pub compact_keep_recent: u32,
+    /// Summarization instructions. Empty ⇒ use the builtin prompt.
+    #[serde(default)]
+    pub compact_prompt: String,
 }
 
 impl Default for Config {
@@ -248,6 +277,10 @@ impl Default for Config {
             hotkeys: Hotkeys::default(),
             mcp_servers: Vec::new(),
             usage_retention_days: 0,
+            auto_compact: true,
+            compact_threshold_pct: default_compact_threshold(),
+            compact_keep_recent: default_compact_keep_recent(),
+            compact_prompt: String::new(),
         }
     }
 }
@@ -412,6 +445,14 @@ impl Config {
             self.theme = "dark".to_string();
         }
         self.dark_mode = !matches!(self.theme.as_str(), "light" | "catppuccin-latte");
+
+        // Compaction knobs.
+        if !self.compact_threshold_pct.is_finite()
+            || !(0.3..=0.95).contains(&self.compact_threshold_pct)
+        {
+            self.compact_threshold_pct = default_compact_threshold();
+        }
+        self.compact_keep_recent = self.compact_keep_recent.clamp(2, 64);
     }
 }
 
