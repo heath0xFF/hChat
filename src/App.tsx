@@ -69,6 +69,9 @@ function defaultSettings(config: Config): SettingsDto {
     presence_penalty: config.presence_penalty,
     stop_sequences: config.stop_sequences,
     working_dir: null,
+    auto_compact: config.auto_compact,
+    compact_threshold_pct: config.compact_threshold_pct,
+    compact_keep_recent: config.compact_keep_recent,
   };
 }
 
@@ -131,9 +134,20 @@ function toChatMessage(m: MessageDto): ChatMessage {
 interface ConvRuntime {
   messages: ChatMessage[];
   streaming: boolean;
+  /** Steering: messages typed while a turn is streaming, sent one-per-turn (FIFO). */
+  queue: string[];
+  /** Compaction: the persisted summary and the message id it covers up to. */
+  summary: string | null;
+  summaryThrough: number | null;
 }
 
-const EMPTY_CONV: ConvRuntime = { messages: [], streaming: false };
+const EMPTY_CONV: ConvRuntime = {
+  messages: [],
+  streaming: false,
+  queue: [],
+  summary: null,
+  summaryThrough: null,
+};
 
 // One in-flight stream's mutable context. `convId` starts as the temp id of an
 // unsaved chat and is rewritten to the real conversation_id on `started`, so
@@ -153,6 +167,10 @@ export function App() {
   const [activeConvId, setActiveConvId] = useState<number | null>(null);
   // All chats' runtimes keyed by conversation_id (negative = unsaved new chat).
   const [convStore, setConvStore] = useState<Record<number, ConvRuntime>>({});
+  // Mirror for stream callbacks that close over a stale convStore (e.g. flushing
+  // the steering queue in runStream's finally).
+  const convStoreRef = useRef<Record<number, ConvRuntime>>({});
+  convStoreRef.current = convStore;
   const [settings, setSettings] = useState<SettingsDto | null>(null);
   const [models, setModels] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -209,6 +227,16 @@ export function App() {
   );
   const streaming =
     activeConvId != null ? convStore[activeConvId]?.streaming ?? false : false;
+  // Current context size of the active chat (token estimate over its messages).
+  // Recomputed when the message count changes or a stream ends — not per token.
+  const contextTokens = useMemo(
+    () => messages.reduce((acc, msg) => acc + countTokens(msg.text ?? ""), 0),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [activeConvId, messages.length, streaming],
+  );
+  const contextWindow =
+    config?.saved_endpoints.find((e) => e.url === settings?.endpoint)
+      ?.context_window ?? null;
   const pendingApproval =
     activeConvId != null ? pendingByConv[activeConvId] ?? null : null;
   // Conversation ids with a stream in flight (drives the sidebar indicator).
@@ -221,13 +249,18 @@ export function App() {
   );
 
   // ----- per-conversation store mutators -----
-  const patchConvMessages = useCallback(
-    (id: number, fn: (msgs: ChatMessage[]) => ChatMessage[]) =>
+  const patchConv = useCallback(
+    (id: number, fn: (r: ConvRuntime) => Partial<ConvRuntime>) =>
       setConvStore((s) => {
         const cur = s[id] ?? EMPTY_CONV;
-        return { ...s, [id]: { ...cur, messages: fn(cur.messages) } };
+        return { ...s, [id]: { ...cur, ...fn(cur) } };
       }),
     [],
+  );
+  const patchConvMessages = useCallback(
+    (id: number, fn: (msgs: ChatMessage[]) => ChatMessage[]) =>
+      patchConv(id, (cur) => ({ messages: fn(cur.messages) })),
+    [patchConv],
   );
   const setConvMessages = useCallback(
     (id: number, msgs: ChatMessage[]) => patchConvMessages(id, () => msgs),
@@ -543,6 +576,10 @@ export function App() {
     // way (in-progress messages have null ids and don't appear in it).
     const live = convStore[id]?.streaming ?? false;
     if (!live) setConvMessages(id, data.messages.map(toChatMessage));
+    patchConv(id, () => ({
+      summary: data.summary,
+      summaryThrough: data.summary_through,
+    }));
     void buildSiblingMap(data.messages);
     setSettings(data.settings);
     setComposerInput(data.draft ?? "");
@@ -598,6 +635,9 @@ export function App() {
     frequency_penalty: s.frequency_penalty,
     presence_penalty: s.presence_penalty,
     stop_sequences: s.stop_sequences,
+    auto_compact: s.auto_compact,
+    compact_threshold_pct: s.compact_threshold_pct,
+    compact_keep_recent: s.compact_keep_recent,
   });
 
   // Shared streaming event handler used by send / regenerate / edit. Bound to a
@@ -723,6 +763,12 @@ export function App() {
                 : m.ttftHistory,
             }));
             break;
+          case "compacted":
+            patchConv(session.convId, () => ({
+              summary: ev.summary,
+              summaryThrough: ev.through_id,
+            }));
+            break;
           case "error":
             setError(ev.message);
             break;
@@ -764,6 +810,10 @@ export function App() {
     const data = await api.loadConversation(id);
     const msgs = data.messages.map(toChatMessage);
     setConvMessages(id, msgs);
+    patchConv(id, () => ({
+      summary: data.summary,
+      summaryThrough: data.summary_through,
+    }));
     if (id === activeConvIdRef.current) await buildSiblingMap(data.messages);
     return msgs;
   };
@@ -829,17 +879,26 @@ export function App() {
             setDockOpen(true);
           }
         }
+        // Steering: if messages were queued during this turn, send the next one
+        // (FIFO) as a fresh turn. Only while this chat is on screen, so a
+        // background stream doesn't start unprompted turns under you.
+        const queued = convStoreRef.current[fid]?.queue ?? [];
+        if (queued.length && fid === activeConvIdRef.current) {
+          patchConv(fid, (r) => ({ queue: r.queue.slice(1) }));
+          send(queued[0], [], fid);
+        }
       }
       refreshConversations();
     }
   };
 
-  const send = (text: string, images: string[] = []) => {
+  // `targetId` is set when flushing a steering-queued message to a specific
+  // conversation; otherwise we send to the active chat (allocating a temp id for
+  // a brand-new one). The temp id becomes real on the `started` event.
+  const send = (text: string, images: string[] = [], targetId?: number) => {
     if (!settings || !settings.model) return;
-    // New chat: allocate a temp id and surface it on screen; existing chat:
-    // append to its own store. The temp id becomes real on the `started` event.
-    const startId = activeConvId ?? nextTempId.current--;
-    if (activeConvId == null) setActiveConvId(startId);
+    const startId = targetId ?? activeConvId ?? nextTempId.current--;
+    if (targetId == null && activeConvId == null) setActiveConvId(startId);
     patchConvMessages(startId, (prev) => [
       ...prev,
       { id: null, role: "user", text, images },
@@ -856,6 +915,13 @@ export function App() {
       ),
     );
   };
+
+  // Steering: queue a message typed while a turn is streaming; it auto-sends as
+  // the next turn (FIFO) when the current one finishes.
+  const enqueue = (id: number, text: string) =>
+    patchConv(id, (r) => ({ queue: [...r.queue, text] }));
+  const removeQueued = (id: number, idx: number) =>
+    patchConv(id, (r) => ({ queue: r.queue.filter((_, i) => i !== idx) }));
 
   const regenerate = () => {
     if (!settings || !settings.model || activeConvId == null) return;
@@ -1142,6 +1208,13 @@ export function App() {
             onChangeEndpoint={setStatusEndpoint}
             metrics={metrics}
             snapshot={snapshot}
+            contextTokens={
+              statusEndpoint === settings.endpoint ? contextTokens : undefined
+            }
+            contextWindow={
+              statusEndpoint === settings.endpoint ? contextWindow : null
+            }
+            compactThresholdPct={settings.compact_threshold_pct}
           />
         ) : view === "usage" ? (
           <UsageView />
@@ -1159,6 +1232,11 @@ export function App() {
             models={models}
             messages={messages}
             streaming={streaming}
+            summaryThrough={
+              activeConvId != null
+                ? convStore[activeConvId]?.summaryThrough ?? null
+                : null
+            }
             pendingApproval={pendingApproval}
             siblingMap={siblingMap}
             input={composerInput}
@@ -1168,6 +1246,13 @@ export function App() {
             focusSignal={focusSignal}
             onResolveTool={resolveTool}
             onSend={send}
+            queue={activeConvId != null ? convStore[activeConvId]?.queue ?? [] : []}
+            onQueue={(t) => {
+              if (activeConvId != null) enqueue(activeConvId, t);
+            }}
+            onRemoveQueued={(i) => {
+              if (activeConvId != null) removeQueued(activeConvId, i);
+            }}
             onSlash={handleSlash}
             onStop={stop}
             onRegenerate={regenerate}
@@ -1208,6 +1293,13 @@ export function App() {
               onChangeEndpoint={setStatusEndpoint}
               metrics={metrics}
               snapshot={snapshot}
+              contextTokens={
+                statusEndpoint === settings.endpoint ? contextTokens : undefined
+              }
+              contextWindow={
+                statusEndpoint === settings.endpoint ? contextWindow : null
+              }
+              compactThresholdPct={settings.compact_threshold_pct}
             />
           }
           artifacts={

@@ -18,6 +18,8 @@ interface Props {
   models: string[];
   messages: ChatMessage[];
   streaming: boolean;
+  /** Compaction boundary: render a divider after the message with this id. */
+  summaryThrough: number | null;
   pendingApproval: PendingApproval | null;
   siblingMap: Record<number, SiblingInfo>;
   input: string;
@@ -27,6 +29,10 @@ interface Props {
   focusSignal: number;
   onResolveTool: (decision: ApprovalDecision) => void;
   onSend: (text: string, images: string[]) => void;
+  /** Steering: messages typed during a stream, waiting to be sent (FIFO). */
+  queue: string[];
+  onQueue: (text: string) => void;
+  onRemoveQueued: (index: number) => void;
   onSlash: (input: string) => boolean;
   onStop: () => void;
   onRegenerate: () => void;
@@ -185,14 +191,23 @@ export function ChatView(props: Props) {
     });
 
   const send = () => {
-    if (props.streaming) return;
-    // Intercept slash commands before sending.
-    if (input.trim().startsWith("/") && props.onSlash(input)) {
+    const t = input.trim();
+    // Steering: while a turn streams, queue plain text for the next turn instead
+    // of blocking. Slash commands are NOT run mid-stream (they can start/clear a
+    // turn — keep the pre-steering behavior of ignoring them while streaming).
+    if (props.streaming) {
+      if (!t || t.startsWith("/")) return;
+      props.onQueue(t);
       onInputChange("");
       resetHeight();
       return;
     }
-    const t = input.trim();
+    // Intercept slash commands before sending.
+    if (t.startsWith("/") && props.onSlash(input)) {
+      onInputChange("");
+      resetHeight();
+      return;
+    }
     if (!t && attachments.length === 0) return;
     props.onSend(t, attachments);
     onInputChange("");
@@ -377,6 +392,11 @@ export function ChatView(props: Props) {
                     }
                     onRegenerate={lastAssistant ? props.onRegenerate : undefined}
                   />
+                  {m.id != null && m.id === props.summaryThrough && (
+                    <div className="compaction-divider" title="Earlier messages were summarized to fit the context window">
+                      <span>⋯ context compacted — earlier messages summarized ⋯</span>
+                    </div>
+                  )}
                 </div>
               );
             })
@@ -391,6 +411,22 @@ export function ChatView(props: Props) {
               approval={props.pendingApproval}
               onResolve={props.onResolveTool}
             />
+          )}
+          {props.queue.length > 0 && (
+            <div className="queue-row">
+              {props.queue.map((q, i) => (
+                <div className="queue-chip" key={i} title={q}>
+                  <span className="queue-chip-label">{q}</span>
+                  <button
+                    className="queue-chip-remove"
+                    title="Remove queued message"
+                    onClick={() => props.onRemoveQueued(i)}
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
           )}
           <div
             className="composer-box"
@@ -419,7 +455,11 @@ export function ChatView(props: Props) {
             <textarea
               ref={taRef}
               rows={1}
-              placeholder="Message…  (Enter to send, Shift+Enter for newline)"
+              placeholder={
+                props.streaming
+                  ? "Streaming… type to queue for the next turn"
+                  : "Message…  (Enter to send, Shift+Enter for newline)"
+              }
               value={input}
               onChange={(e) => {
                 onInputChange(e.target.value);
@@ -462,9 +502,20 @@ export function ChatView(props: Props) {
                 <span className="hint token-count">{props.tokenCount} tok</span>
               )}
               {props.streaming ? (
-                <button className="stop-btn" onClick={props.onStop}>
-                  ■ Stop
-                </button>
+                <>
+                  {input.trim() && (
+                    <button
+                      className="send-btn"
+                      onClick={send}
+                      title="Queue this message for the next turn"
+                    >
+                      Queue ⏎
+                    </button>
+                  )}
+                  <button className="stop-btn" onClick={props.onStop}>
+                    ■ Stop
+                  </button>
+                </>
               ) : (
                 <button
                   className="send-btn"

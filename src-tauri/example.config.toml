@@ -74,6 +74,31 @@ use_max_tokens = false
 # Default: 0
 usage_retention_days = 0
 
+# --- Auto-compaction ---
+# When the active conversation approaches the endpoint's context window, Fornax
+# summarizes the older messages with an LLM call and continues from
+# `summary + recent tail`, so long chats don't overflow the window. Requires the
+# endpoint's `context_window` (see saved_endpoints below) to be set.
+
+# auto_compact: Master toggle for auto-compaction.
+# Default: true
+auto_compact = true
+
+# compact_threshold_pct: Fraction of the context window at which compaction fires.
+# Accepted range: 0.3 to 0.95.
+# Default: 0.8
+compact_threshold_pct = 0.8
+
+# compact_keep_recent: Number of most-recent messages kept verbatim (never
+# summarized). Accepted range: 2 to 64.
+# Default: 8
+compact_keep_recent = 8
+
+# compact_prompt: Custom summarization instructions. Leave empty to use the
+# builtin prompt.
+# Default: ""
+compact_prompt = ""
+
 # --- Advanced sampling (all optional — leave commented to use model defaults) ---
 
 # top_p: Nucleus sampling. Restricts token choices to the top-p probability mass.
@@ -139,6 +164,8 @@ url = "http://localhost:1234/v1"
 #   gpu             = "none" | "macmon" | "agent"                (default "none";
 #                     local endpoints on macOS default to "macmon" automatically)
 #   agent_url       = base URL of a fornax-agent when gpu = "agent"
+#   context_window  = model context size in tokens (e.g. 8192, 131072). Enables
+#                     auto-compaction for this endpoint; omit if unknown.
 #
 # oMLX on this Mac — local GPU (unified memory/power/temp) via macmon:
 # [[saved_endpoints]]
@@ -158,6 +185,7 @@ url = "http://localhost:1234/v1"
 # prometheus_url = "http://spark:8000/metrics"
 # gpu = "agent"
 # agent_url = "http://spark:9099"
+# context_window = 131072
 #
 # Remote DGX Spark running llama.cpp behind llama-swap (its own /metrics):
 # [[saved_endpoints]]

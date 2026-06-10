@@ -86,6 +86,11 @@ pub struct ConversationSettings {
     /// Working directory for tool calls in this conversation. `None` falls
     /// back to `~`. Set per-conversation via the settings panel.
     pub working_dir: Option<String>,
+    /// Per-conversation auto-compaction overrides. `None` falls back to the
+    /// global `Config` value.
+    pub auto_compact: Option<bool>,
+    pub compact_threshold_pct: Option<f32>,
+    pub compact_keep_recent: Option<u32>,
 }
 
 pub struct Storage {
@@ -226,6 +231,12 @@ impl Storage {
             ("working_dir", "TEXT"),
             // Project grouping (nullable — loose chats have NULL).
             ("project_id", "INTEGER"),
+            // Auto-compaction: per-conversation overrides + persisted summary state.
+            ("auto_compact", "INTEGER"),
+            ("compact_threshold_pct", "REAL"),
+            ("compact_keep_recent", "INTEGER"),
+            ("summary", "TEXT"),
+            ("summary_through", "INTEGER"),
         ];
         const MSG_COLS: &[(&str, &str)] = &[
             // SQLite allows ALTER TABLE ADD COLUMN with a self-referencing
@@ -1086,7 +1097,7 @@ impl Storage {
             .query_row(
                 "SELECT model, system_prompt, temperature, max_tokens, use_max_tokens,
                         top_p, frequency_penalty, presence_penalty, stop_sequences, endpoint,
-                        working_dir
+                        working_dir, auto_compact, compact_threshold_pct, compact_keep_recent
                  FROM conversations WHERE id = ?1",
                 params![id],
                 |row| {
@@ -1115,6 +1126,21 @@ impl Storage {
                         stop_sequences,
                         endpoint: row.get(9).ok(),
                         working_dir: row.get(10).ok(),
+                        auto_compact: row
+                            .get::<_, Option<i64>>(11)
+                            .ok()
+                            .flatten()
+                            .map(|v| v != 0),
+                        compact_threshold_pct: row
+                            .get::<_, Option<f64>>(12)
+                            .ok()
+                            .flatten()
+                            .map(|v| v as f32),
+                        compact_keep_recent: row
+                            .get::<_, Option<i64>>(13)
+                            .ok()
+                            .flatten()
+                            .map(|v| v as u32),
                     })
                 },
             )
@@ -1133,9 +1159,10 @@ impl Storage {
                  SET model = ?1, system_prompt = ?2, temperature = ?3, max_tokens = ?4,
                      use_max_tokens = ?5, top_p = ?6, frequency_penalty = ?7,
                      presence_penalty = ?8, stop_sequences = ?9, endpoint = ?10,
-                     working_dir = ?11,
+                     working_dir = ?11, auto_compact = ?12, compact_threshold_pct = ?13,
+                     compact_keep_recent = ?14,
                      updated_at = datetime('now')
-                 WHERE id = ?12",
+                 WHERE id = ?15",
                 params![
                     s.model,
                     s.system_prompt,
@@ -1148,8 +1175,37 @@ impl Storage {
                     stop_json,
                     s.endpoint,
                     s.working_dir,
+                    s.auto_compact.map(|v| v as i64),
+                    s.compact_threshold_pct.map(|v| v as f64),
+                    s.compact_keep_recent.map(|v| v as i64),
                     id,
                 ],
+            )
+            .ok();
+    }
+
+    /// The persisted compaction summary and the message id it covers up to
+    /// (inclusive). `(None, None)` when the conversation has never been compacted.
+    pub fn load_compaction(&self, id: i64) -> (Option<String>, Option<i64>) {
+        self.conn
+            .query_row(
+                "SELECT summary, summary_through FROM conversations WHERE id = ?1",
+                params![id],
+                |row| {
+                    Ok((
+                        row.get::<_, Option<String>>(0)?,
+                        row.get::<_, Option<i64>>(1)?,
+                    ))
+                },
+            )
+            .unwrap_or((None, None))
+    }
+
+    pub fn save_compaction(&self, id: i64, summary: &str, through: i64) {
+        self.conn
+            .execute(
+                "UPDATE conversations SET summary = ?1, summary_through = ?2 WHERE id = ?3",
+                params![summary, through, id],
             )
             .ok();
     }
@@ -1249,6 +1305,10 @@ impl Storage {
                     // useful default ("be in /Users/heath/projects/X" makes
                     // sense for a conv but not as a portable preset).
                     working_dir: None,
+                    // Compaction overrides are conversation-scoped, not presets.
+                    auto_compact: None,
+                    compact_threshold_pct: None,
+                    compact_keep_recent: None,
                 },
             })
         })
@@ -1558,6 +1618,9 @@ mod tests {
             stop_sequences: vec!["END".to_string(), "STOP".to_string()],
             endpoint: Some("https://openrouter.ai/api/v1".to_string()),
             working_dir: Some("/tmp/work".to_string()),
+            auto_compact: Some(false),
+            compact_threshold_pct: Some(0.6),
+            compact_keep_recent: Some(12),
         };
         s.save_conversation_settings(id, &original);
         let loaded = s.load_conversation_settings(id);
@@ -1571,6 +1634,21 @@ mod tests {
         assert_eq!(loaded.presence_penalty, original.presence_penalty);
         assert_eq!(loaded.stop_sequences, original.stop_sequences);
         assert_eq!(loaded.endpoint, original.endpoint);
+        assert_eq!(loaded.auto_compact, original.auto_compact);
+        assert_eq!(loaded.compact_threshold_pct, original.compact_threshold_pct);
+        assert_eq!(loaded.compact_keep_recent, original.compact_keep_recent);
+    }
+
+    #[test]
+    fn round_trips_compaction_state() {
+        let s = mem_storage();
+        let id = s.create_conversation("compaction test").unwrap();
+        assert_eq!(s.load_compaction(id), (None, None));
+        s.save_compaction(id, "earlier summary", 42);
+        assert_eq!(
+            s.load_compaction(id),
+            (Some("earlier summary".to_string()), Some(42))
+        );
     }
 
     #[test]

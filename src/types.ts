@@ -10,6 +10,8 @@ export interface Endpoint {
   prometheus_url?: string | null;
   gpu?: GpuKind;
   agent_url?: string | null;
+  /** Model context window in tokens; enables auto-compaction for this endpoint. */
+  context_window?: number | null;
 }
 
 export interface Hotkeys {
@@ -64,6 +66,14 @@ export interface Config {
   mcp_servers?: McpServer[];
   /** Days of usage history to keep (0 = forever). */
   usage_retention_days: number;
+  /** Auto-compaction master toggle. */
+  auto_compact: boolean;
+  /** Fraction of the context window at which compaction fires (0.3–0.95). */
+  compact_threshold_pct: number;
+  /** Most-recent messages kept verbatim (2–64). */
+  compact_keep_recent: number;
+  /** Custom summarization prompt; empty = builtin. */
+  compact_prompt: string;
 }
 
 export interface ConversationDto {
@@ -168,12 +178,19 @@ export interface SettingsDto {
   presence_penalty: number | null;
   stop_sequences: string[];
   working_dir: string | null;
+  /** Effective auto-compaction settings (per-conversation over global). */
+  auto_compact: boolean;
+  compact_threshold_pct: number;
+  compact_keep_recent: number;
 }
 
 export interface ConversationData {
   messages: MessageDto[];
   settings: SettingsDto;
   draft: string | null;
+  /** Persisted compaction summary + the message id it covers up to (inclusive). */
+  summary: string | null;
+  summary_through: number | null;
 }
 
 // Shared generation knobs (flattened into the request payloads server-side).
@@ -188,6 +205,10 @@ export interface GenParams {
   frequency_penalty: number | null;
   presence_penalty: number | null;
   stop_sequences: string[];
+  /** Effective auto-compaction settings, merged on the frontend. */
+  auto_compact: boolean;
+  compact_threshold_pct: number;
+  compact_keep_recent: number;
 }
 
 export interface SendParams extends GenParams {
@@ -303,7 +324,13 @@ export type ChatEvent =
       duration_ms: number;
     }
   | { type: "done"; message_id: number | null }
-  | { type: "error"; message: string };
+  | { type: "error"; message: string }
+  | {
+      type: "compacted";
+      through_id: number;
+      summary: string;
+      removed: number;
+    };
 
 export interface PendingApproval {
   id: string;

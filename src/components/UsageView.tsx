@@ -3,15 +3,10 @@ import { api } from "../lib/tauri";
 import type { UsageStats } from "../types";
 import { Chart } from "./Chart";
 import { useDialog } from "./Dialog";
+import { fmtTokens } from "../lib/tokens";
 
 function fmtInt(n: number): string {
   return n.toLocaleString();
-}
-
-function fmtTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K`;
-  return String(n);
 }
 
 function hostOf(url: string): string {
