@@ -1,0 +1,98 @@
+{
+  "cli_version": "0.7.5",
+  "checkpoint_id": "3ce248899c12",
+  "session_id": "88349e6c-77f2-4b13-8bbf-8fe3962bab7b",
+  "strategy": "manual-commit",
+  "created_at": "2026-06-10T12:52:56.122162Z",
+  "branch": "feat/compaction-steering",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "src-tauri/example.config.toml",
+    "src-tauri/src/commands.rs",
+    "src-tauri/src/core/config.rs",
+    "src-tauri/src/core/storage.rs",
+    "src/App.tsx",
+    "src/components/ChatView.tsx",
+    "src/components/SettingsModal.tsx",
+    "src/components/StatusView.tsx",
+    "src/components/UsageView.tsx",
+    "src/lib/tokens.ts",
+    "src/styles.css",
+    "src/types.ts"
+  ],
+  "agent": "Claude Code",
+  "model": "claude-opus-4-8[1m]",
+  "turn_id": "6d8600ea8077",
+  "token_usage": {
+    "input_tokens": 27329,
+    "cache_creation_tokens": 511581,
+    "cache_read_tokens": 32185543,
+    "output_tokens": 116224,
+    "api_call_count": 201
+  },
+  "skill_events_version": 1,
+  "skill_events": [
+    {
+      "id": "claude-skill-toolu_01LpMV8qqbgtiM3zQeKS9U74",
+      "event_type": "tool_invocation",
+      "skill": {
+        "name": "code-review"
+      },
+      "source": {
+        "agent": "claude-code",
+        "signal": "skill_tool_use",
+        "confidence": "explicit"
+      },
+      "turn_id": "6d8600ea8077",
+      "transcript_anchor": {
+        "unit": "line",
+        "start": 786,
+        "end": 787,
+        "entry_ids": [
+          "19671210-e60c-4b85-904b-1bafaca87f23"
+        ],
+        "tool_use_id": "toolu_01LpMV8qqbgtiM3zQeKS9U74"
+      },
+      "native": {
+        "tool_name": "Skill",
+        "tool_use_id": "toolu_01LpMV8qqbgtiM3zQeKS9U74"
+      },
+      "collapse": {
+        "target": "tool_pair",
+        "label": "Skill: code-review",
+        "default_collapsed": true
+      }
+    }
+  ],
+  "session_metrics": {
+    "turn_count": 1
+  },
+  "initial_attribution": {
+    "calculated_at": "2026-06-10T12:52:56.10391Z",
+    "agent_lines": 875,
+    "agent_removed": 28,
+    "human_added": 0,
+    "human_modified": 0,
+    "human_removed": 0,
+    "total_committed": 875,
+    "total_lines_changed": 903,
+    "agent_percentage": 100,
+    "metric_version": 2
+  },
+  "prompt_attributions": [
+    {
+      "checkpoint_number": 1,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 0,
+      "agent_lines_removed": 0
+    },
+    {
+      "checkpoint_number": 2,
+      "user_lines_added": 0,
+      "user_lines_removed": 0,
+      "agent_lines_added": 875,
+      "agent_lines_removed": 28
+    }
+  ]
+}

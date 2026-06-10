@@ -1,0 +1,4 @@
+two things i'd like for this project: 
+
+1. auto compaction with a setting to configure compaction
+2. steering

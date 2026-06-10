@@ -1,0 +1,36 @@
+{
+  "cli_version": "0.7.5",
+  "checkpoint_id": "3ce248899c12",
+  "strategy": "manual-commit",
+  "branch": "feat/compaction-steering",
+  "checkpoints_count": 1,
+  "files_touched": [
+    "src-tauri/example.config.toml",
+    "src-tauri/src/commands.rs",
+    "src-tauri/src/core/config.rs",
+    "src-tauri/src/core/storage.rs",
+    "src/App.tsx",
+    "src/components/ChatView.tsx",
+    "src/components/SettingsModal.tsx",
+    "src/components/StatusView.tsx",
+    "src/components/UsageView.tsx",
+    "src/lib/tokens.ts",
+    "src/styles.css",
+    "src/types.ts"
+  ],
+  "sessions": [
+    {
+      "metadata": "/3c/e248899c12/0/metadata.json",
+      "transcript": "/3c/e248899c12/0/full.jsonl",
+      "content_hash": "/3c/e248899c12/0/content_hash.txt",
+      "prompt": "/3c/e248899c12/0/prompt.txt"
+    }
+  ],
+  "token_usage": {
+    "input_tokens": 27329,
+    "cache_creation_tokens": 511581,
+    "cache_read_tokens": 32185543,
+    "output_tokens": 116224,
+    "api_call_count": 201
+  }
+}
